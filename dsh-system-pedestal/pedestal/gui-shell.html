@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DSH System Pedestal v4.0</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: { cyan: '#06b6d4', dark: '#0b1120', panel: '#1e293b' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #f8fafc; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+  </style>
+</head>
+<body class="bg-[#fcfcfd] text-slate-900 flex flex-col h-screen overflow-hidden select-none font-sans">
+
+  <!-- Slot-1: 顶部全局状态栏 -->
+  <header class="h-12 bg-white border-b border-slate-200 flex items-center justify-between px-4 z-20 flex-shrink-0 shadow-sm">
+    <div class="flex items-center space-x-3">
+      <div class="flex items-center space-x-2">
+        <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" id="sys-pulse"></span>
+        <span class="font-bold tracking-wider text-cyan-400 text-sm">PEDESTAL v4.0</span>
+      </div>
+      <span class="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">MICROKERNEL</span>
+    </div>
+
+    <!-- 中间指标 -->
+    <div class="flex items-center space-x-6 text-xs text-slate-300">
+      <div class="flex items-center space-x-2">
+        <span class="text-slate-400">Workers:</span>
+        <div class="w-20 bg-slate-800 rounded-full h-2 overflow-hidden">
+          <div id="worker-load-bar" class="bg-cyan-500 h-2 rounded-full w-0 transition-all duration-300"></div>
+        </div>
+        <span id="worker-load-txt" class="text-cyan-400 font-mono">0/0</span>
+      </div>
+      <div class="flex items-center space-x-2">
+        <span class="text-slate-400">SQLite:</span>
+        <span id="db-node-count" class="text-emerald-400 font-mono">0 nodes</span>
+      </div>
+    </div>
+
+    <!-- 右侧操作 -->
+    <div class="flex items-center space-x-2">
+      <button onclick="toggleCommandPalette()" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 rounded border border-slate-700 flex items-center space-x-1.5 transition">
+        <span>Cmd</span>
+        <kbd class="px-1 bg-slate-900 text-slate-400 rounded text-[10px]">Ctrl+K</kbd>
+      </button>
+      <button onclick="fetchOverview()" title="刷新全量状态" class="p-1 hover:text-cyan-400 text-slate-400 transition">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- 中间核心操作区 (Slot-2, Slot-3, Slot-4) -->
+  <div class="flex flex-1 overflow-hidden relative">
+
+    <!-- Slot-2: 左侧导航栏 -->
+    <aside class="w-14 bg-slate-900 border-r border-slate-800 flex flex-col items-center py-3 space-y-4 flex-shrink-0 z-10">
+      <!-- 固定导航 -->
+      <div class="flex flex-col space-y-2 w-full items-center">
+        <button onclick="switchTab('plugins')" id="nav-btn-plugins" title="插件热控中心" class="nav-btn p-2.5 rounded-lg text-slate-400 hover:text-cyan-400 hover:bg-slate-800 transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
+        </button>
+        <button onclick="switchTab('workers')" id="nav-btn-workers" title="多线程算力大盘" class="nav-btn p-2.5 rounded-lg text-slate-400 hover:text-cyan-400 hover:bg-slate-800 transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path></svg>
+        </button>
+        <button onclick="switchTab('dag')" id="nav-btn-dag" title="DAG 工作流画布" class="nav-btn p-2.5 rounded-lg text-slate-400 hover:text-cyan-400 hover:bg-slate-800 transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+        </button>
+      </div>
+
+      <div class="w-6 h-px bg-slate-800"></div>
+
+      <!-- 下半区：动态微前端插件插槽 -->
+      <div id="dynamic-nav-slots" class="flex flex-col space-y-2 w-full items-center overflow-y-auto"></div>
+    </aside>
+
+    <!-- Slot-3: 主画布容器区 (Main Stage) -->
+    <main class="flex-1 bg-slate-950 overflow-y-auto p-4 relative" id="main-stage">
+
+      <!-- 视图 1：插件热控中心 -->
+      <section id="view-plugins" class="space-y-4">
+        <div class="flex items-center justify-between pb-2 border-b border-slate-800">
+          <div>
+            <h2 class="text-base font-semibold text-cyan-400">插件热插拔管控中心</h2>
+            <p class="text-xs text-slate-400">实时拓扑隔离容器 · 沙箱生命周期与热更新状态机</p>
+          </div>
+          <button onclick="refreshPlugins()" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-xs rounded border border-slate-700 transition">扫描重读</button>
+        </div>
+        <div id="plugin-cards-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+      </section>
+
+      <!-- 视图 2：多线程算力大盘 -->
+      <section id="view-workers" class="space-y-4 hidden">
+        <div class="flex items-center justify-between pb-2 border-b border-slate-800">
+          <div>
+            <h2 class="text-base font-semibold text-cyan-400">多线程并发算力池</h2>
+            <p class="text-xs text-slate-400">常驻 Worker 隔离进程 · SQLite 独立连接并发读</p>
+          </div>
+          <span class="text-xs font-mono text-emerald-400" id="worker-summary-text">Ready</span>
+        </div>
+
+        <div class="grid grid-cols-3 gap-4">
+          <div class="p-3 bg-slate-900 border border-slate-800 rounded-lg">
+            <div class="text-xs text-slate-400">P0 (Realtime 最高优)</div>
+            <div class="text-xl font-bold font-mono text-cyan-400 mt-1" id="q-len-p0">0</div>
+            <div class="text-[10px] text-slate-500">加解密 / 实时余弦检索</div>
+          </div>
+          <div class="p-3 bg-slate-900 border border-slate-800 rounded-lg">
+            <div class="text-xs text-slate-400">P1 (Normal 中优)</div>
+            <div class="text-xl font-bold font-mono text-emerald-400 mt-1" id="q-len-p1">0</div>
+            <div class="text-[10px] text-slate-500">工作流脱敏 / Token 估算</div>
+          </div>
+          <div class="p-3 bg-slate-900 border border-slate-800 rounded-lg">
+            <div class="text-xs text-slate-400">P2 (Background 低优)</div>
+            <div class="text-xl font-bold font-mono text-slate-400 mt-1" id="q-len-p2">0</div>
+            <div class="text-[10px] text-slate-500">图谱权重 / 抽屉衰减扫描</div>
+          </div>
+        </div>
+
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-3">
+          <h3 class="text-xs font-semibold text-slate-300">算力性能遥测</h3>
+          <div class="grid grid-cols-3 gap-4 text-xs font-mono">
+            <div>累计完成: <span id="tele-completed" class="text-cyan-400">0</span></div>
+            <div>执行失败: <span id="tele-failed" class="text-rose-400">0</span></div>
+            <div>平均耗时: <span id="tele-avg-ms" class="text-emerald-400">0 ms</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 视图 3：DAG 自动化工作流可视化画布 -->
+      <section id="view-dag" class="space-y-4 hidden h-full flex flex-col">
+        <div class="flex items-center justify-between pb-2 border-b border-slate-800 flex-shrink-0">
+          <div>
+            <h2 class="text-base font-semibold text-cyan-400">DAG 工作流可视化编排</h2>
+            <p class="text-xs text-slate-400">Fork & Join 并列调度 · 依赖拓扑状态机</p>
+          </div>
+          <div class="flex space-x-2">
+            <select id="dag-select" onchange="renderSelectedDag()" class="bg-slate-800 border border-slate-700 text-xs rounded px-2 py-1 text-slate-200 outline-none"></select>
+            <button onclick="triggerCurrentDag()" class="px-3 py-1 bg-cyan-600 hover:bg-cyan-500 text-xs rounded text-slate-950 font-semibold transition">立即运行</button>
+          </div>
+        </div>
+
+        <div class="flex-1 bg-slate-900 border border-slate-800 rounded-lg relative overflow-hidden flex items-center justify-center min-h-[360px]">
+          <canvas id="dag-canvas" class="w-full h-full block"></canvas>
+          <div id="dag-empty-hint" class="text-xs text-slate-500 pointer-events-none absolute">暂无选中的 DAG 拓扑节点</div>
+        </div>
+      </section>
+
+      <!-- 插件动态微前端视图容器 -->
+      <section id="plugin-stage-container" class="space-y-4 hidden h-full"></section>
+
+    </main>
+
+    <!-- Slot-4: 右侧属性上下文抽屉 (Inspector) -->
+    <aside id="inspector-drawer" class="w-80 bg-slate-900 border-l border-slate-800 flex flex-col p-4 flex-shrink-0 transition-all duration-300 transform translate-x-full absolute right-0 top-0 bottom-0 z-20 shadow-2xl">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+        <h3 class="text-sm font-semibold text-cyan-400" id="inspector-title">属性查看器</h3>
+        <button onclick="PedestalShell.closeInspector()" class="text-slate-400 hover:text-slate-200">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        </button>
+      </div>
+      <div id="inspector-content" class="flex-1 overflow-y-auto py-3 text-xs text-slate-300 space-y-2"></div>
+    </aside>
+
+  </div>
+
+  <!-- 底部常驻：SSE 内核实时事件流控制台 -->
+  <footer id="sse-console-panel" class="h-28 bg-slate-900 border-t border-slate-800 flex flex-col z-20 flex-shrink-0">
+    <div class="h-6 bg-slate-950/60 px-3 flex items-center justify-between text-[11px] text-slate-400 border-b border-slate-800/80">
+      <div class="flex items-center space-x-2">
+        <span class="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping"></span>
+        <span class="font-mono">KERNEL EVENTBUS & TELEMETRY STREAM</span>
+      </div>
+      <div class="flex items-center space-x-2">
+        <button onclick="clearSseLogs()" class="hover:text-cyan-400">清空</button>
+        <button onclick="toggleConsoleHeight()" id="toggle-console-btn" class="hover:text-cyan-400">折叠</button>
+      </div>
+    </div>
+    <div id="sse-logs" class="flex-1 p-2 font-mono text-[11px] overflow-y-auto space-y-1 bg-slate-950/40 select-text"></div>
+  </footer>
+
+  <!-- 命令面板 (Ctrl+K) -->
+  <div id="command-palette" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden flex items-start justify-center pt-20">
+    <div class="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-xl shadow-2xl overflow-hidden">
+      <div class="p-3 border-b border-slate-800 flex items-center space-x-2">
+        <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+        <input type="text" id="cmd-input" placeholder="输入命令或选择跳转视图..." class="w-full bg-transparent text-sm text-slate-200 outline-none">
+      </div>
+      <div class="max-h-60 overflow-y-auto p-2 space-y-1 text-xs" id="cmd-results">
+        <div onclick="switchTab('plugins'); toggleCommandPalette();" class="p-2 hover:bg-slate-800 rounded cursor-pointer flex justify-between">
+          <span>📦 打开插件热插拔管控中心</span>
+          <span class="text-slate-500 font-mono">View</span>
+        </div>
+        <div onclick="switchTab('workers'); toggleCommandPalette();" class="p-2 hover:bg-slate-800 rounded cursor-pointer flex justify-between">
+          <span>⚡ 打开多线程算力大盘</span>
+          <span class="text-slate-500 font-mono">View</span>
+        </div>
+        <div onclick="switchTab('dag'); toggleCommandPalette();" class="p-2 hover:bg-slate-800 rounded cursor-pointer flex justify-between">
+          <span>🌿 打开 DAG 工作流画布</span>
+          <span class="text-slate-500 font-mono">View</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Global Microfrontend Shell Bridge
+    window.PedestalShell = {
+      openInspector(title, htmlOrRenderFn) {
+        document.getElementById('inspector-title').textContent = title || '属性查看器';
+        const box = document.getElementById('inspector-content');
+        box.innerHTML = '';
+        if (typeof htmlOrRenderFn === 'function') {
+          htmlOrRenderFn(box);
+        } else {
+          box.innerHTML = htmlOrRenderFn || '';
+        }
+        document.getElementById('inspector-drawer').classList.remove('translate-x-full');
+      },
+      closeInspector() {
+        document.getElementById('inspector-drawer').classList.add('translate-x-full');
+      },
+      async apiFetch(url, opts = {}) {
+        return fetch(url, opts).then(r => r.json());
+      },
+      notify(level, msg) {
+        logConsole(`[${level.toUpperCase()}] ${msg}`, level === 'error' ? 'text-rose-400' : 'text-cyan-400');
+      }
+    };
+
+    let allTemplates = [];
+    let currentTab = 'plugins';
+
+    function switchTab(tab) {
+      currentTab = tab;
+      document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('text-cyan-400', 'bg-slate-800'));
+      document.getElementById('nav-btn-' + tab)?.classList.add('text-cyan-400', 'bg-slate-800');
+
+      ['plugins', 'workers', 'dag'].forEach(t => {
+        document.getElementById('view-' + t)?.classList.add('hidden');
+      });
+      document.getElementById('plugin-stage-container').classList.add('hidden');
+
+      if (['plugins', 'workers', 'dag'].includes(tab)) {
+        document.getElementById('view-' + tab)?.classList.remove('hidden');
+        if (tab === 'dag') renderSelectedDag();
+      } else {
+        document.getElementById('plugin-stage-container').classList.remove('hidden');
+      }
+    }
+
+    // SSE Stream Integration
+    function initSse() {
+      const evtSource = new EventSource('/api/sys/sse');
+      evtSource.onmessage = (e) => {
+        logConsole(e.data);
+      };
+      evtSource.addEventListener('bus_event', (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          logConsole(`[BUS] ${data.event}: ${JSON.stringify(data.payload)}`, 'text-cyan-400');
+          if (data.event.startsWith('sys:plugin_')) refreshPlugins();
+        } catch {}
+      });
+      evtSource.addEventListener('notification', (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          logConsole(`[NOTIFY] ${data.message}`, 'text-emerald-400');
+        } catch {}
+      });
+    }
+
+    function logConsole(msg, color = 'text-slate-400') {
+      const container = document.getElementById('sse-logs');
+      const time = new Date().toLocaleTimeString();
+      const div = document.createElement('div');
+      div.className = `${color} leading-tight`;
+      div.textContent = `[${time}] ${msg}`;
+      container.appendChild(div);
+      if (container.children.length > 200) container.removeChild(container.firstChild);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function clearSseLogs() {
+      document.getElementById('sse-logs').innerHTML = '';
+    }
+
+    let isConsoleCollapsed = false;
+    function toggleConsoleHeight() {
+      const p = document.getElementById('sse-console-panel');
+      const btn = document.getElementById('toggle-console-btn');
+      isConsoleCollapsed = !isConsoleCollapsed;
+      p.style.height = isConsoleCollapsed ? '24px' : '112px';
+      btn.textContent = isConsoleCollapsed ? '展开' : '折叠';
+    }
+
+    // Data Loaders
+    async function fetchOverview() {
+      try {
+        const data = await fetch('/api/sys/overview').then(r => r.json());
+        // Worker Bar
+        const w = data.workerTelemetry;
+        if (w) {
+          const busy = w.busyWorkers || 0;
+          const total = w.poolSize || 2;
+          const pct = Math.round((busy / total) * 100);
+          document.getElementById('worker-load-bar').style.width = pct + '%';
+          document.getElementById('worker-load-txt').textContent = `${busy}/${total}`;
+
+          document.getElementById('q-len-p0').textContent = w.queueLengths.P0;
+          document.getElementById('q-len-p1').textContent = w.queueLengths.P1;
+          document.getElementById('q-len-p2').textContent = w.queueLengths.P2;
+          document.getElementById('tele-completed').textContent = w.totalCompleted;
+          document.getElementById('tele-failed').textContent = w.totalFailed;
+          document.getElementById('tele-avg-ms').textContent = `${w.averageExecutionTimeMs} ms`;
+        }
+
+        // DB Nodes
+        if (data.dbStats) {
+          document.getElementById('db-node-count').textContent = `${data.dbStats.knowledge_nodes || 0} nodes`;
+        }
+
+        // Dynamic views mounting
+        renderDynamicViews(data.views || []);
+      } catch (err) {
+        console.error('Overview fetch error:', err);
+      }
+    }
+
+    async function refreshPlugins() {
+      try {
+        const plugins = await fetch('/api/sys/plugins').then(r => r.json());
+        const grid = document.getElementById('plugin-cards-grid');
+        grid.innerHTML = '';
+        if (plugins.length === 0) {
+          grid.innerHTML = '<div class="text-xs text-slate-500 py-4 col-span-3">plugins/ 目录暂无业务插件</div>';
+          return;
+        }
+
+        plugins.forEach(p => {
+          const card = document.createElement('div');
+          card.className = 'p-4 bg-slate-900 border border-slate-800 rounded-lg flex flex-col justify-between space-y-3';
+          const stateColor = p.state === 'ACTIVE' ? 'bg-emerald-950 text-emerald-400 border-emerald-800' :
+                             p.state === 'ERROR' ? 'bg-rose-950 text-rose-400 border-rose-800' : 'bg-slate-800 text-slate-400 border-slate-700';
+
+          card.innerHTML = `
+            <div>
+              <div class="flex items-center justify-between">
+                <span class="text-sm font-semibold text-slate-100">${p.name || p.id}</span>
+                <span class="px-2 py-0.5 text-[10px] rounded border ${stateColor} font-mono">${p.state}</span>
+              </div>
+              <div class="text-[11px] text-slate-400 font-mono mt-1">${p.fileName || p.id} (v${p.version || '1.0.0'})</div>
+              <div class="text-[10px] text-slate-500 mt-2">依赖: ${p.dependencies?.length ? p.dependencies.join(', ') : '无'}</div>
+              ${p.errorMsg ? `<div class="text-[10px] text-rose-400 mt-1 truncate" title="${p.errorMsg}">错误: ${p.errorMsg}</div>` : ''}
+            </div>
+            <div class="flex space-x-2 pt-2 border-t border-slate-800">
+              <button onclick="pluginAction('reload', '${p.id}', '${p.fileName}')" class="flex-1 py-1 bg-slate-800 hover:bg-slate-700 text-cyan-400 text-xs rounded border border-slate-700">重载</button>
+              <button onclick="pluginAction('unload', '${p.id}', '${p.fileName}')" class="flex-1 py-1 bg-slate-800 hover:bg-slate-700 text-rose-400 text-xs rounded border border-slate-700">卸载</button>
+            </div>
+          `;
+          grid.appendChild(card);
+        });
+      } catch (err) {
+        console.error('Plugins refresh error:', err);
+      }
+    }
+
+    async function pluginAction(action, pluginId, fileName) {
+      await fetch('/api/sys/plugins/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, pluginId, fileName })
+      });
+      refreshPlugins();
+      fetchOverview();
+    }
+
+    // Dynamic views slot-2
+    function renderDynamicViews(views) {
+      const container = document.getElementById('dynamic-nav-slots');
+      container.innerHTML = '';
+      views.forEach(v => {
+        const btn = document.createElement('button');
+        btn.className = 'nav-btn p-2.5 rounded-lg text-slate-400 hover:text-cyan-400 hover:bg-slate-800 transition';
+        btn.title = v.title || v.id;
+        btn.innerHTML = v.icon || `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>`;
+        btn.onclick = () => {
+          switchTab(v.id);
+          const stage = document.getElementById('plugin-stage-container');
+          stage.innerHTML = '';
+          if (typeof v.renderScript === 'string') {
+            try {
+              const fn = (new Function('container', 'shell', v.renderScript));
+              fn(stage, window.PedestalShell);
+            } catch (err) {
+              stage.innerHTML = `<div class="text-rose-400 text-xs p-4">Plugin View Render Error: ${err.message}</div>`;
+            }
+          }
+        };
+        container.appendChild(btn);
+      });
+    }
+
+    // DAG Canvas Drawer
+    async function loadWorkflows() {
+      try {
+        const res = await fetch('/api/sys/workflows').then(r => r.json());
+        allTemplates = res.templates || [];
+        const sel = document.getElementById('dag-select');
+        sel.innerHTML = '';
+        allTemplates.forEach(t => {
+          const opt = document.createElement('option');
+          opt.value = t.id;
+          opt.textContent = `${t.name} (${t.id})`;
+          sel.appendChild(opt);
+        });
+        renderSelectedDag();
+      } catch {}
+    }
+
+    function renderSelectedDag() {
+      const selId = document.getElementById('dag-select')?.value;
+      const tpl = allTemplates.find(t => t.id === selId);
+      const canvas = document.getElementById('dag-canvas');
+      const hint = document.getElementById('dag-empty-hint');
+      const ctx = canvas.getContext('2d');
+
+      canvas.width = canvas.parentElement.clientWidth;
+      canvas.height = canvas.parentElement.clientHeight;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (!tpl || !tpl.nodeCount) {
+        hint.style.display = 'block';
+        return;
+      }
+      hint.style.display = 'none';
+
+      // Simple visual topology mock rendering
+      ctx.font = '12px monospace';
+      ctx.fillStyle = '#06b6d4';
+      ctx.textAlign = 'center';
+      ctx.fillText(`DAG: ${tpl.name} [Nodes: ${tpl.nodeCount}]`, canvas.width / 2, 40);
+
+      // Draw demo fork & join circles
+      const nodes = [
+        { label: 'Start (A)', x: canvas.width / 2 - 120, y: 140 },
+        { label: 'Worker 1 (B)', x: canvas.width / 2, y: 100 },
+        { label: 'Worker 2 (C)', x: canvas.width / 2, y: 180 },
+        { label: 'Join (D)', x: canvas.width / 2 + 120, y: 140 }
+      ];
+
+      ctx.strokeStyle = '#334155';
+      ctx.lineWidth = 2;
+      // Connect
+      ctx.beginPath();
+      ctx.moveTo(nodes[0].x, nodes[0].y); ctx.lineTo(nodes[1].x, nodes[1].y);
+      ctx.moveTo(nodes[0].x, nodes[0].y); ctx.lineTo(nodes[2].x, nodes[2].y);
+      ctx.moveTo(nodes[1].x, nodes[1].y); ctx.lineTo(nodes[3].x, nodes[3].y);
+      ctx.moveTo(nodes[2].x, nodes[2].y); ctx.lineTo(nodes[3].x, nodes[3].y);
+      ctx.stroke();
+
+      // Render Nodes
+      nodes.forEach(n => {
+        ctx.fillStyle = '#1e293b';
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, 20, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#06b6d4';
+        ctx.stroke();
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillText(n.label, n.x, n.y + 35);
+      });
+    }
+
+    async function triggerCurrentDag() {
+      const templateId = document.getElementById('dag-select')?.value;
+      if (!templateId) return;
+      logConsole(`Triggering DAG: ${templateId}...`, 'text-cyan-400');
+      try {
+        const res = await fetch('/api/sys/workflows/trigger', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ templateId })
+        }).then(r => r.json());
+        if (res.success) {
+          logConsole(`DAG ${templateId} completed in ${res.result?.durationMs}ms`, 'text-emerald-400');
+        } else {
+          logConsole(`DAG execution failed: ${res.error}`, 'text-rose-400');
+        }
+      } catch (e) {
+        logConsole(`Trigger error: ${e.message}`, 'text-rose-400');
+      }
+    }
+
+    // Command Palette
+    function toggleCommandPalette() {
+      const p = document.getElementById('command-palette');
+      p.classList.toggle('hidden');
+      if (!p.classList.contains('hidden')) {
+        document.getElementById('cmd-input').focus();
+      }
+    }
+    window.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        toggleCommandPalette();
+      }
+      if (e.key === 'Escape') {
+        document.getElementById('command-palette').classList.add('hidden');
+        PedestalShell.closeInspector();
+      }
+    });
+
+    // Boot
+    window.addEventListener('DOMContentLoaded', () => {
+      switchTab('plugins');
+      initSse();
+      fetchOverview();
+      refreshPlugins();
+      loadWorkflows();
+      setInterval(fetchOverview, 5000);
+    });
+  </script>
+</body>
+</html>

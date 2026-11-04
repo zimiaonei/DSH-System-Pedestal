@@ -1,0 +1,35 @@
+{
+  "name": "dsh-system-pedestal",
+  "version": "4.0.0",
+  "private": true,
+  "type": "module",
+  "description": "DSH 图形化微内核基座与热插拔记忆生态",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "index.mjs",
+    "daemon.mjs",
+    "client.js",
+    "icon.svg",
+    "cordis.patch.yml",
+    "pedestal",
+    "plugins"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  }
+}

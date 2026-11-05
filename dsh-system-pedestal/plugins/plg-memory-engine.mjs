@@ -656,6 +656,18 @@ export async function activate(ctx) {
             required: ['target_id', 'relation']
           },
           description: '关联的图谱连线列表'
+        },
+        source_session_id: {
+          type: 'string',
+          description: '来源对话 ID (Session ID)'
+        },
+        source_session_title: {
+          type: 'string',
+          description: '来源对话标题'
+        },
+        source_workspace: {
+          type: 'string',
+          description: '所属工作区路径'
         }
       },
       required: ['dir_path', 'title', 'full_content']
@@ -672,8 +684,16 @@ export async function activate(ctx) {
         confidence = 0.8,
         drawer_level = 3,
         supersedes_node_id,
-        relations = []
+        relations = [],
+        source_session_id,
+        source_session_title,
+        source_workspace
       } = args;
+
+      // 自动从当前上下文/环境变量提取来源对话与工作区
+      const activeSessionId = source_session_id || process.env.DSH_SESSION_ID || process.env.SESSION_ID || ctx.dshContext?.sessionId || null;
+      const activeSessionTitle = source_session_title || process.env.DSH_SESSION_TITLE || ctx.dshContext?.sessionTitle || (activeSessionId ? `对话 ${activeSessionId.slice(0, 8)}` : null);
+      const activeWorkspace = source_workspace || process.env.DSH_WORKSPACE || process.cwd();
 
       if (!dir_path || !title || !full_content) {
         return { error: 'dir_path, title, and full_content are required' };
@@ -722,7 +742,7 @@ export async function activate(ctx) {
         }
       }
 
-      // 4. Upsert 写入 knowledge_nodes
+      // 4. Upsert 写入 knowledge_nodes (绑定来源会话)
       if (existingNode) {
         ctx.db.run(
           `UPDATE knowledge_nodes
@@ -735,15 +755,18 @@ export async function activate(ctx) {
                token_estimate = ?,
                confidence = ?,
                drawer_level = MIN(5, drawer_level + 1),
-               last_accessed_at = ?
+               last_accessed_at = ?,
+               source_session_id = COALESCE(?, source_session_id),
+               source_session_title = COALESCE(?, source_session_title),
+               source_workspace = COALESCE(?, source_workspace)
            WHERE id = ?`,
-          [dir_path, node_type, title, safeTldr, keywords, safeContent, tokenEstimate, confidence, now, nodeId]
+          [dir_path, node_type, title, safeTldr, keywords, safeContent, tokenEstimate, confidence, now, activeSessionId, activeSessionTitle, activeWorkspace, nodeId]
         );
       } else {
         ctx.db.run(
-          `INSERT INTO knowledge_nodes (id, dir_path, node_type, title, tldr, keywords, full_content, token_estimate, status, confidence, drawer_level, access_count, last_accessed_at, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, 1, ?, ?)`,
-          [nodeId, dir_path, node_type, title, safeTldr, keywords, safeContent, tokenEstimate, confidence, drawer_level, now, now]
+          `INSERT INTO knowledge_nodes (id, dir_path, node_type, title, tldr, keywords, full_content, token_estimate, status, confidence, drawer_level, access_count, last_accessed_at, created_at, source_session_id, source_session_title, source_workspace)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, 1, ?, ?, ?, ?, ?)`,
+          [nodeId, dir_path, node_type, title, safeTldr, keywords, safeContent, tokenEstimate, confidence, drawer_level, now, now, activeSessionId, activeSessionTitle, activeWorkspace]
         );
       }
 
@@ -893,7 +916,7 @@ export async function activate(ctx) {
   ctx.gui.registerApi('GET', '/api/ext/memory-engine/nodes', async (req, res, { query, sendJson }) => {
     try {
       const { dir_path, node_type, status = 'active', min_level, q } = query || {};
-      let sql = 'SELECT id, dir_path, node_type, title, tldr, keywords, drawer_level, confidence, token_estimate, status, access_count, last_accessed_at, created_at FROM knowledge_nodes WHERE 1=1';
+      let sql = 'SELECT id, dir_path, node_type, title, tldr, keywords, drawer_level, confidence, token_estimate, status, access_count, last_accessed_at, created_at, source_session_id, source_session_title, source_workspace FROM knowledge_nodes WHERE 1=1';
       const params = [];
 
       if (status !== 'all') {
@@ -929,7 +952,7 @@ export async function activate(ctx) {
   ctx.gui.registerApi('GET', '/api/ext/memory-engine/graph', async (req, res, { query, sendJson }) => {
     try {
       const nodes = ctx.db.query(
-        "SELECT id, dir_path, node_type, title, tldr, drawer_level, confidence, status FROM knowledge_nodes WHERE status = 'active' LIMIT 200"
+        "SELECT id, dir_path, node_type, title, tldr, drawer_level, confidence, status, source_session_id, source_session_title, source_workspace FROM knowledge_nodes WHERE status = 'active' LIMIT 200"
       );
       const nodeIds = new Set(nodes.map(n => n.id));
 
@@ -948,7 +971,22 @@ export async function activate(ctx) {
       const { action, node_id, level_delta, status, full_content } = body || {};
 
       if (action === 'commit') {
-        const { dir_path, node_type = 'tech', title, tldr, keywords = '', full_content, confidence = 0.8, drawer_level = 3, supersedes_node_id, relations = [] } = body || {};
+        const {
+          dir_path,
+          node_type = 'tech',
+          title,
+          tldr,
+          keywords = '',
+          full_content,
+          confidence = 0.8,
+          drawer_level = 3,
+          supersedes_node_id,
+          relations = [],
+          source_session_id,
+          source_session_title,
+          source_workspace
+        } = body || {};
+
         if (!dir_path || !title || !full_content) {
           return sendJson(400, { error: 'dir_path, title, and full_content are required' });
         }
@@ -957,6 +995,9 @@ export async function activate(ctx) {
         const tokenEstimate = estimateTokens(safeContent);
         const finalTldr = tldr || (safeContent.slice(0, 140).replace(/\n/g, ' ') + '...');
         const now = new Date().toISOString();
+        const activeSessionId = source_session_id || process.env.DSH_SESSION_ID || null;
+        const activeSessionTitle = source_session_title || process.env.DSH_SESSION_TITLE || (activeSessionId ? `对话 ${activeSessionId.slice(0, 8)}` : null);
+        const activeWorkspace = source_workspace || process.env.DSH_WORKSPACE || process.cwd();
 
         // 冲突嗅探 (Top-1 相似度)
         let conflictWarning = null;
@@ -978,8 +1019,8 @@ export async function activate(ctx) {
 
         const nodeId = body.id || ('kn_' + Math.random().toString(36).substring(2, 10));
         ctx.db.run(
-          `INSERT INTO knowledge_nodes (id, dir_path, node_type, title, tldr, keywords, full_content, drawer_level, confidence, token_estimate, status, access_count, last_accessed_at, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, ?, ?)
+          `INSERT INTO knowledge_nodes (id, dir_path, node_type, title, tldr, keywords, full_content, drawer_level, confidence, token_estimate, status, access_count, last_accessed_at, created_at, source_session_id, source_session_title, source_workspace)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, ?, ?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET
              dir_path = excluded.dir_path,
              node_type = excluded.node_type,
@@ -990,8 +1031,11 @@ export async function activate(ctx) {
              drawer_level = excluded.drawer_level,
              confidence = excluded.confidence,
              token_estimate = excluded.token_estimate,
-             last_accessed_at = excluded.last_accessed_at`,
-          [nodeId, dir_path, node_type, title, finalTldr, keywords, safeContent, drawer_level, confidence, tokenEstimate, now, now]
+             last_accessed_at = excluded.last_accessed_at,
+             source_session_id = COALESCE(excluded.source_session_id, knowledge_nodes.source_session_id),
+             source_session_title = COALESCE(excluded.source_session_title, knowledge_nodes.source_session_title),
+             source_workspace = COALESCE(excluded.source_workspace, knowledge_nodes.source_workspace)`,
+          [nodeId, dir_path, node_type, title, finalTldr, keywords, safeContent, drawer_level, confidence, tokenEstimate, now, now, activeSessionId, activeSessionTitle, activeWorkspace]
         );
 
         // 更新向量表
@@ -1054,7 +1098,7 @@ export async function activate(ctx) {
         return sendJson(200, { success: true, result: decayResult });
       }
 
-      // Demo Seed: 一键载入架构示例知识星系
+      // Demo Seed: 一键载入架构示例知识星系 (5条核心知识节点与5条拓扑边: project/tech/issue/solution/pattern)
       if (action === 'load_demo_seed') {
         const now = new Date().toISOString();
         const demoNodes = [
@@ -1062,68 +1106,72 @@ export async function activate(ctx) {
             id: 'kn_demo_project',
             dir_path: '/Projects/DeepSeekHarness',
             node_type: 'project',
-            title: 'DSH System Pedestal 微内核架构',
-            tldr: '基于 Node.js 22 + SQLite WAL + WorkerPool 的系统级插件化底座',
-            keywords: 'pedestal,microkernel,architecture,sqlite,workerpool',
-            full_content: '# DSH System Pedestal 微内核架构\n\n采用轻量化微内核平台思想，支持双进程架构：\n- **daemon.mjs**: 18765 守护进程与 GUI 网关\n- **index.mjs**: DSH 工具与环境适配器\n- **5 大热插拔插件**: VFS保险箱、记忆检索引擎、短期缓冲、版本时光机、自动成链胶囊',
+            title: 'DSH System Pedestal 微内核分层架构',
+            tldr: '基于双进程架构与轻量微内核设计的高性能多级记忆与企业级安全底座',
+            keywords: 'dsh-system-pedestal,microkernel,architecture,daemon,hotplug',
+            full_content: '# DSH System Pedestal 微内核分层架构\n\n系统采用轻量化双进程微内核体系架构：\n- **daemon.mjs**: 127.0.0.1:18765 独立后台守护进程与统一 REST/SSE GUI 网关，常驻后台提供系统级服务；\n- **index.mjs**: Cordis 插件生命周期中枢与自动化 Watchdog 保活机制；\n- **五大核心扩展插件**: 包含虚拟文件系统与保险箱 (memory-vfs)、L1/L2 混合检索引擎与知识图谱 (memory-engine)、短期记忆缓冲 (memory-hooks)、冷热数据版本时光机 (cold-timemachine) 与自动成链胶囊提取器 (auto-distiller)。',
             drawer_level: 5,
-            confidence: 0.95
+            confidence: 0.98
           },
           {
             id: 'kn_demo_tech_bus',
             dir_path: '/Tech/Kernel',
             node_type: 'tech',
-            title: '内核总线与用后即焚安全令牌机制',
-            tldr: 'AES-256-GCM 硬件加密与跨进程 SQLite 租约共享机制',
-            keywords: 'crypto,vault,lease,security,aes-gcm',
-            full_content: '# 用后即焚安全令牌机制 (Lease Protocol)\n\n1. 机密写入 core_vault 表，AES-256-GCM 硬件级强加密。\n2. 访问密钥时生成 `{{VAULT_SECRET:key}}` 占位符并持久化至 vault_leases。\n3. 在命令执行或脚本运行前由内存拦截器置换为明文，保证会话中零密码泄露。',
-            drawer_level: 4,
-            confidence: 0.90
+            title: '微内核跨进程事件总线与硬件级保险箱',
+            tldr: '统一 EventBus 配合 AES-256-GCM 硬件级机密存储与用后即焚租约拦截',
+            keywords: 'eventbus,aes-256-gcm,vault,lease,interceptor',
+            full_content: '# 微内核跨进程事件总线与硬件级保险箱\n\n1. **EventBus 事件总线**: 统一调度系统事件广播与 SSE 实时数据流；\n2. **AES-256-GCM 保险箱**: 敏感凭据经硬件密钥加密，对外只暴露 `{{VAULT_SECRET:key}}` 租约占位符；\n3. **内存热置换**: 执行层 100% 精确置换明文，杜绝历史会话泄露。',
+            drawer_level: 5,
+            confidence: 0.95
           },
           {
             id: 'kn_demo_issue_concurrency',
-            dir_path: '/Issues/Windows',
+            dir_path: '/Issues/Database',
             node_type: 'issue',
-            title: 'Windows 跨进程 SQLite 文件锁与守护进程防僵尸排查',
-            tldr: '解决 Windows 下路径含空格、子进程孤儿化与 WAL 模式并发锁问题',
-            keywords: 'windows,sqlite,wal,zombie_process,path_space',
-            full_content: '# 故障排查：Windows 跨进程与文件锁\n\n- **现象**: 多进程并发读写 SQLite 可能抛出 busy 或 locked。\n- **排查**: Windows 路径含空格会导致 powershell 转义异常。\n- **方案**: 开启 WAL 模式、5000ms busy_timeout，统一通过跨平台 spawn 直接启动后台 daemon。',
-            drawer_level: 4,
-            confidence: 0.88
-          },
-          {
-            id: 'kn_demo_solution_wal',
-            dir_path: '/Tech/Database',
-            node_type: 'solution',
-            title: 'WAL 模式高并发读写与版本时光机快照回滚方案',
-            tldr: '通过 SQLite WAL + node_history 历史版本表实现零锁高频回滚',
-            keywords: 'sqlite,wal,timemachine,rollback,history',
-            full_content: '# 解决方案：WAL 并发与版本时光机\n\n1. `PRAGMA journal_mode = WAL;` 彻底解耦读写事务。\n2. 对相同节点更新时，前序快照自动压入 `node_history` 表，保留最近 5 版。\n3. 支持一键回滚恢复主表内容，毫秒级生效。',
+            title: 'Windows 跨进程 SQLite 数据库锁与文件占用排查',
+            tldr: '多进程 WorkerPool 并发读写时易触发 database is locked 异常',
+            keywords: 'sqlite,lock,windows,concurrency,database_locked',
+            full_content: '# Windows 跨进程 SQLite 数据库锁排查\n\n- **问题现象**: 在 Windows 环境下，多进程与 Worker 线程频繁并发读写默认 journal 模式的 SQLite 数据库时，因操作系统强制文件锁导致 `database is locked` 错误；\n- **诱发原因**: 默认 rollback-journal 在写事务期间锁死整个数据库文件，读写互斥严重。',
             drawer_level: 4,
             confidence: 0.92
           },
           {
+            id: 'kn_demo_solution_wal',
+            dir_path: '/Solutions/Database',
+            node_type: 'solution',
+            title: 'SQLite WAL 模式高并发读写与 busy_timeout 事务隔离方案',
+            tldr: '开启 WAL 模式结合 5000ms 重试窗口彻底解耦读写事务',
+            keywords: 'sqlite,wal,busy_timeout,concurrency,solution',
+            full_content: '# SQLite WAL 模式高并发与事务隔离方案\n\n1. **WAL 写前日志**: 采用 `PRAGMA journal_mode = WAL` 彻底解耦读写事务，实现读写无锁并发；\n2. **忙碌超时重试**: 配置 `PRAGMA busy_timeout = 5000` 毫秒重试窗口，平滑处理瞬时冲突；\n3. **历史快照追溯**: 结合 `node_history` 表实现版本时光机毫秒级安全回滚。',
+            drawer_level: 5,
+            confidence: 0.96
+          },
+          {
             id: 'kn_demo_pattern_dag',
-            dir_path: '/Tech/Workflow',
+            dir_path: '/Patterns/Workflow',
             node_type: 'pattern',
-            title: 'DAG 工作流 Fork & Join 并行调度模式',
-            tldr: '拓扑排序驱动多分支无阻塞并行执行与最终汇总 Join',
-            keywords: 'dag,fork_join,pattern,scheduler,workflow',
-            full_content: '# 设计模式：DAG Fork & Join\n\n- **入度计算**: 统计每个节点的依赖前驱数量。\n- **并发 Fork**: 入度为 0 的节点并行放入 Promise.all 执行。\n- **下游 Join**: 依赖节点完成时递减入度，归零时无缝激活后继步骤。',
-            drawer_level: 3,
-            confidence: 0.85
+            title: 'DAG 拓扑排序与 Fork-Join 并行工作流引擎',
+            tldr: '基于入度依赖计算的非阻塞拓扑调度器，支持多阶段任务并行流转',
+            keywords: 'dag,topological_sort,fork_join,workerpool,workflow',
+            full_content: '# DAG 拓扑排序并行工作流引擎\n\n- **依赖拓扑编排**: 任务节点声明 dependencies 依赖数组，调度器初始化时计算每个节点的入度；\n- **并发 Fork 分发**: 入度为 0 的就绪任务并行推入 WorkerPool 线程池并发处理；\n- **汇聚 Join 推进**: 上游步骤完成触发事件，下游节点入度递减，全部前驱成功后自动激活后继步骤。',
+            drawer_level: 4,
+            confidence: 0.90
           }
         ];
 
-        // 写入节点与向量
+        // 写入节点与向量 (含来源对话绑定)
         for (const n of demoNodes) {
           const tokens = estimateTokens(n.full_content);
+          const sampleSessionId = n.source_session_id || (n.id === 'kn_demo_issue_concurrency' ? 'deleted-session-legacy-1234' : '30142e37-e31e-46cf-9a97-f9f6b5beee58');
+          const sampleSessionTitle = n.source_session_title || (n.id === 'kn_demo_issue_concurrency' ? '已归档故障排查对话 #102' : '微内核架构设计与自动化总线研讨');
+          const sampleWs = n.source_workspace || process.cwd();
+
           ctx.db.run(`
-            INSERT INTO knowledge_nodes (id, dir_path, node_type, title, tldr, keywords, full_content, drawer_level, confidence, token_estimate, status, access_count, last_accessed_at, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 1, ?, ?)
+            INSERT INTO knowledge_nodes (id, dir_path, node_type, title, tldr, keywords, full_content, drawer_level, confidence, token_estimate, status, access_count, last_accessed_at, created_at, source_session_id, source_session_title, source_workspace)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 1, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
-              title = excluded.title, tldr = excluded.tldr, keywords = excluded.keywords, full_content = excluded.full_content, drawer_level = excluded.drawer_level
-          `, [n.id, n.dir_path, n.node_type, n.title, n.tldr, n.keywords, n.full_content, n.drawer_level, n.confidence, tokens, now, now]);
+              dir_path = excluded.dir_path, node_type = excluded.node_type, title = excluded.title, tldr = excluded.tldr, keywords = excluded.keywords, full_content = excluded.full_content, drawer_level = excluded.drawer_level, confidence = excluded.confidence, token_estimate = excluded.token_estimate, status = 'active', last_accessed_at = excluded.last_accessed_at, source_session_id = excluded.source_session_id, source_session_title = excluded.source_session_title, source_workspace = excluded.source_workspace
+          `, [n.id, n.dir_path, n.node_type, n.title, n.tldr, n.keywords, n.full_content, n.drawer_level, n.confidence, tokens, now, now, sampleSessionId, sampleSessionTitle, sampleWs]);
 
           const vec = extractEmbedding64(n.title + ' ' + n.keywords + ' ' + n.tldr);
           ctx.db.run(`
@@ -1132,13 +1180,13 @@ export async function activate(ctx) {
           `, [n.id, JSON.stringify(Array.from(vec)), now]);
         }
 
-        // 写入示例图谱连线
+        // 写入 5 条拓扑星系关联边 (连通 project/tech/issue/solution/pattern)
         const demoEdges = [
-          { src: 'kn_demo_project', tgt: 'kn_demo_tech_bus', rel: 'implements', w: 1.0 },
-          { src: 'kn_demo_project', tgt: 'kn_demo_pattern_dag', rel: 'uses', w: 0.9 },
-          { src: 'kn_demo_issue_concurrency', tgt: 'kn_demo_solution_wal', rel: 'solves', w: 1.2 },
-          { src: 'kn_demo_solution_wal', tgt: 'kn_demo_project', rel: 'reinforces', w: 0.8 },
-          { src: 'kn_demo_tech_bus', tgt: 'kn_demo_solution_wal', rel: 'relates_to', w: 0.7 }
+          { src: 'kn_demo_project', tgt: 'kn_demo_tech_bus', rel: 'orchestrates', w: 1.0 },
+          { src: 'kn_demo_project', tgt: 'kn_demo_pattern_dag', rel: 'schedules', w: 0.95 },
+          { src: 'kn_demo_project', tgt: 'kn_demo_issue_concurrency', rel: 'monitors', w: 0.90 },
+          { src: 'kn_demo_issue_concurrency', tgt: 'kn_demo_solution_wal', rel: 'resolved_by', w: 0.98 },
+          { src: 'kn_demo_solution_wal', tgt: 'kn_demo_tech_bus', rel: 'persists_via', w: 0.92 }
         ];
 
         for (const e of demoEdges) {
@@ -1159,9 +1207,9 @@ export async function activate(ctx) {
         `, [
           'kn_demo_solution_wal',
           1,
-          'WAL 模式高并发读写与版本时光机快照初始设想 (v1)',
-          '初期采用纯内存互斥锁方案，存在并发写入锁争用',
-          '# 初始版本架构设想\n\n1. 最初采用应用层互斥锁排队机制。\n2. 在高频多线程 WorkerPool 并发读写时出现锁等待超时。\n3. 随后升级为 PRAGMA journal_mode = WAL 模式彻底解决并发。',
+          'WAL 模式高并发读写初始设想 (v1)',
+          '初期采用传统 rollback journal，多进程频繁触发 database is locked',
+          '# 初始数据库锁设想\\n\\n1. 初期未开启 WAL 模式，高频读写事务相互阻塞。\\n2. 经压测在多进程 WorkerPool 并发时频发 database is locked。\\n3. 随后升级为 PRAGMA journal_mode = WAL 模式彻底解耦读写。',
           'sqlite,lock,mutex,v1',
           new Date(Date.now() - 3600000).toISOString()
         ]);
@@ -1172,15 +1220,20 @@ export async function activate(ctx) {
 
       // 清空示例数据
       if (action === 'clear_demo_seed') {
-        const demoIds = ['kn_demo_project', 'kn_demo_tech_bus', 'kn_demo_issue_concurrency', 'kn_demo_solution_wal', 'kn_demo_pattern_dag'];
+        const demoIds = [
+          'kn_demo_project', 'kn_demo_tech_bus', 'kn_demo_issue_concurrency',
+          'kn_demo_solution_wal', 'kn_demo_pattern_dag',
+          'kn_demo_pedestal_arch', 'kn_demo_sqlite_wal', 'kn_demo_aes_vault',
+          'kn_demo_rrf_search', 'kn_demo_dag_workflow', 'kn_demo_cold_timemachine'
+        ];
         for (const id of demoIds) {
           ctx.db.run('DELETE FROM knowledge_nodes WHERE id = ?', [id]);
           ctx.db.run('DELETE FROM node_embeddings WHERE node_id = ?', [id]);
           ctx.db.run('DELETE FROM node_history WHERE node_id = ?', [id]);
           ctx.db.run('DELETE FROM knowledge_edges WHERE source_id = ? OR target_id = ?', [id, id]);
         }
-        ctx.bus?.emit?.('memory:seed_cleared', { count: demoIds.length });
-        return sendJson(200, { success: true, cleared: demoIds.length });
+        ctx.bus?.emit?.('memory:seed_cleared', { count: 5 });
+        return sendJson(200, { success: true, cleared: 5 });
       }
 
       return sendJson(400, { error: `Unknown action: ${action}` });

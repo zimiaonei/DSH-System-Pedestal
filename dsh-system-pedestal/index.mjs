@@ -17,21 +17,23 @@ const MODULES = [
 export function getNodeExecutable() {
   const possiblePaths = [
     path.join(os.homedir(), '.dsh', 'dsh-runtimes', 'dsh-next-primary-runtime', 'dependencies', 'node', 'bin', 'node.exe'),
-    path.join(os.homedir(), '.dsh', 'dsh-runtimes', 'dsh-primary-runtime', 'dependencies', 'node', 'bin', 'node.exe'),
-    'node'
+    path.join(os.homedir(), '.dsh', 'dsh-runtimes', 'dsh-primary-runtime', 'dependencies', 'node', 'bin', 'node.exe')
   ];
   for (const p of possiblePaths) {
-    if (p === 'node' || fs.existsSync(p)) {
+    if (fs.existsSync(p)) {
       return p;
     }
   }
-  return process.execPath;
+  if (process.execPath && !process.execPath.toLowerCase().includes('electron')) {
+    return process.execPath;
+  }
+  return 'node';
 }
 
-export async function isPortOpen(port = 18765, host = '127.0.0.1', timeoutMs = 600) {
+export async function isPortOpen(port = 18765, host = '127.0.0.1', timeoutMs = 800) {
   return new Promise((resolve) => {
-    const req = http.request({ host, port, path: '/', method: 'GET', timeout: timeoutMs }, (res) => {
-      resolve(true);
+    const req = http.request({ host, port, path: '/api/sys/overview', method: 'GET', timeout: timeoutMs }, (res) => {
+      resolve(res.statusCode === 200 || res.statusCode === 304);
       res.resume();
     });
     req.on('error', () => resolve(false));
@@ -40,12 +42,17 @@ export async function isPortOpen(port = 18765, host = '127.0.0.1', timeoutMs = 6
   });
 }
 
+let isSpawning = false;
+let watchdogTimer = null;
+
 export async function ensureDaemon(baseDir) {
+  if (isSpawning) return;
   const open = await isPortOpen(18765);
   if (!open) {
+    isSpawning = true;
     const daemonScript = path.join(baseDir, 'daemon.mjs');
     const nodeBin = getNodeExecutable();
-    console.log('[Pedestal] GUI Gateway 18765 not running. Spawning detached daemon with:', nodeBin);
+    console.log('[Pedestal Watchdog] GUI Gateway 18765 is down! Spawning detached daemon with:', nodeBin);
     try {
       const child = spawn(nodeBin, [daemonScript], {
         detached: true,
@@ -54,12 +61,35 @@ export async function ensureDaemon(baseDir) {
         env: process.env
       });
       child.unref();
-      console.log('[Pedestal] Detached daemon process spawned successfully with PID:', child.pid);
+      console.log('[Pedestal Watchdog] Detached daemon process spawned successfully with PID:', child.pid);
     } catch (err) {
-      console.error('[Pedestal] Failed to spawn daemon process:', err);
+      console.error('[Pedestal Watchdog] Failed to spawn daemon process:', err);
+    } finally {
+      setTimeout(() => { isSpawning = false; }, 3000);
     }
-  } else {
-    console.log('[Pedestal] GUI Gateway 18765 is already alive and running.');
+  }
+}
+
+export function startWatchdog(baseDir) {
+  if (watchdogTimer) return;
+  console.log('[Pedestal] Starting 5s background watchdog for 127.0.0.1:18765...');
+  // Initial check immediately
+  ensureDaemon(baseDir).catch(() => {});
+  watchdogTimer = setInterval(() => {
+    ensureDaemon(baseDir).catch((err) => {
+      console.error('[Pedestal Watchdog] Check error:', err);
+    });
+  }, 5000);
+  if (typeof watchdogTimer.unref === 'function') {
+    watchdogTimer.unref();
+  }
+}
+
+export function stopWatchdog() {
+  if (watchdogTimer) {
+    clearInterval(watchdogTimer);
+    watchdogTimer = null;
+    console.log('[Pedestal] Background watchdog stopped.');
   }
 }
 
@@ -150,18 +180,70 @@ export async function bootstrapPedestal(dshContext = {}) {
   }
   instance.statusTool = statusTool;
 
+  const testTool = {
+    name: 'pedestal_run_tests',
+    description: 'Run on-demand black/white/grey-box and regression tests for dsh-system-pedestal microkernel',
+    parameters: {
+      type: 'object',
+      properties: {
+        suite: {
+          type: 'string',
+          enum: ['all', 'whitebox', 'blackbox', 'greybox', 'regression'],
+          description: '测试套件: all (全部15项) | whitebox (白盒机制) | blackbox (黑盒契约) | greybox (灰盒并发) | regression (专项回归)',
+          default: 'all'
+        },
+        filter: {
+          type: 'string',
+          description: '可选过滤关键字'
+        }
+      }
+    },
+    handler: async (args = {}) => {
+      const suite = args.suite || 'all';
+      const filter = args.filter || '';
+      try {
+        const res = await fetch('http://127.0.0.1:18765/api/sys/tests/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ suites: [suite], filter })
+        }).then(r => r.json());
+        return res;
+      } catch (err) {
+        if (instance.kernel) {
+          const { runOnDemandTests } = await import(pathToFileURL(path.join(pedestalDir, 'test-runner.mjs')).href);
+          return await runOnDemandTests(instance.kernel, { suites: [suite], filter });
+        }
+        return { error: 'Daemon not reachable: ' + err.message };
+      }
+    }
+  };
+
+  if (dshContext.tools?.register) {
+    dshContext.tools.register(testTool);
+  } else if (dshContext.registerTool) {
+    dshContext.registerTool(testTool);
+  } else if (dshContext.registry?.register) {
+    dshContext.registry.register(testTool);
+  }
+  instance.testTool = testTool;
+
   console.log('[Pedestal] Pedestal bootstrap sequence completed.');
   return instance;
 }
 
 export function apply(ctx, config) {
   console.log('[Pedestal] Cordis plugin apply hook invoked.');
+  const baseDir = path.dirname(fileURLToPath(import.meta.url));
+  // Mount 5-second background watchdog
+  startWatchdog(baseDir);
+
   bootstrapPedestal(ctx).catch((err) => {
     console.error('[Pedestal] Failed during bootstrapPedestal in apply hook:', err);
   });
   if (ctx && typeof ctx.on === 'function') {
     ctx.on('dispose', async () => {
       console.log('[Pedestal] Cordis plugin dispose hook invoked.');
+      stopWatchdog();
       if (globalThis.__DSH_PEDESTAL__?.shutdown) {
         await globalThis.__DSH_PEDESTAL__.shutdown();
       }
@@ -169,12 +251,19 @@ export function apply(ctx, config) {
   }
 }
 
-export const activate = bootstrapPedestal;
+export const activate = async (ctx) => {
+  const baseDir = path.dirname(fileURLToPath(import.meta.url));
+  startWatchdog(baseDir);
+  return await bootstrapPedestal(ctx);
+};
+
 export default {
   apply,
   activate,
   bootstrapPedestal,
   ensureDaemon,
+  startWatchdog,
+  stopWatchdog,
   isPortOpen,
   getNodeExecutable
 };

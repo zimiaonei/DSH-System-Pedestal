@@ -11,6 +11,7 @@ const BACKUPS_DIR = path.join(VAULT_DIR, 'backups');
 const DB_PATH = path.join(VAULT_DIR, 'memory.db');
 const KEY_PATH = path.join(VAULT_DIR, '.master_key');
 const LEASE_CACHE_PATH = path.join(VAULT_DIR, '.vault_leases.enc');
+const RUNTIME_LOG_PATH = path.join(VAULT_DIR, 'pedestal-runtime.log');
 
 export function createKernelBus(context = {}) {
   const dshContext = context.dshContext || context;
@@ -89,7 +90,10 @@ export function createKernelBus(context = {}) {
       drawer_level INTEGER DEFAULT 3,
       access_count INTEGER DEFAULT 0,
       last_accessed_at TEXT,
-      created_at TEXT
+      created_at TEXT,
+      source_session_id TEXT,
+      source_session_title TEXT,
+      source_workspace TEXT
     );
 
     CREATE TABLE IF NOT EXISTS knowledge_edges (
@@ -140,6 +144,22 @@ export function createKernelBus(context = {}) {
       expires_at INTEGER
     );
   `);
+
+  // Idempotent column check for knowledge_nodes
+  try {
+    const existingCols = db.prepare("PRAGMA table_info(knowledge_nodes)").all().map(c => c.name);
+    if (!existingCols.includes('source_session_id')) {
+      db.exec("ALTER TABLE knowledge_nodes ADD COLUMN source_session_id TEXT;");
+    }
+    if (!existingCols.includes('source_session_title')) {
+      db.exec("ALTER TABLE knowledge_nodes ADD COLUMN source_session_title TEXT;");
+    }
+    if (!existingCols.includes('source_workspace')) {
+      db.exec("ALTER TABLE knowledge_nodes ADD COLUMN source_workspace TEXT;");
+    }
+  } catch (err) {
+    console.warn('[Pedestal:DB] Migration check failed:', err.message);
+  }
 
   // Default Root Directories
   const rootDirs = ['/Projects', '/Tech', '/Issues', '/Inbox', '/Vault'];
@@ -396,6 +416,97 @@ export function createKernelBus(context = {}) {
     }
   };
 
+  // 3.5 Structured Ring Buffer Logger & Error Diagnostic Stream
+  const MAX_LOG_ENTRIES = 500;
+  const memoryLogs = [];
+
+  function appendLogEntry(level, moduleName, message, stack = null, context = null) {
+    const entry = {
+      id: 'log_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
+      timestamp: new Date().toISOString(),
+      level: (level || 'INFO').toUpperCase(),
+      module: moduleName || 'Kernel',
+      message: typeof message === 'string' ? message : JSON.stringify(message),
+      stack: stack || null,
+      context: context || null
+    };
+
+    memoryLogs.push(entry);
+    if (memoryLogs.length > MAX_LOG_ENTRIES) {
+      memoryLogs.shift();
+    }
+
+    // Persist to ~/.dsh/memory_vault/pedestal-runtime.log
+    try {
+      const line = JSON.stringify(entry) + '\n';
+      fs.appendFileSync(RUNTIME_LOG_PATH, line, 'utf8');
+    } catch {}
+
+    // Broadcast via bus to SSE clients
+    try {
+      bus.emit('sys:log', entry);
+    } catch {}
+
+    return entry;
+  }
+
+  // Initial startup log entry
+  appendLogEntry('INFO', 'Kernel', 'Microkernel logging subsystem initialized', null, { runtimeLogPath: RUNTIME_LOG_PATH });
+
+  // Hook global uncaughtException and unhandledRejection safely
+  if (!globalThis.__PEDESTAL_ERRORS_ATTACHED__) {
+    globalThis.__PEDESTAL_ERRORS_ATTACHED__ = true;
+    process.on('uncaughtException', (err) => {
+      console.error('[Pedestal:UncaughtException]', err);
+      appendLogEntry('ERROR', 'Kernel', err.message || 'Uncaught Exception', err.stack, { type: 'uncaughtException' });
+    });
+    process.on('unhandledRejection', (reason) => {
+      console.error('[Pedestal:UnhandledRejection]', reason);
+      const msg = reason?.message || String(reason) || 'Unhandled Rejection';
+      const stk = reason?.stack || null;
+      appendLogEntry('ERROR', 'Kernel', msg, stk, { type: 'unhandledRejection' });
+    });
+  }
+
+  // Forward bus events into structured log
+  bus.on('*', (payload, entry) => {
+    if (entry.event === 'sys:log') return; // prevent loop
+    const level = entry.event.includes('error') || entry.event.includes('fail') ? 'ERROR' : 'INFO';
+    appendLogEntry(level, 'EventBus', `Event: ${entry.event}`, null, payload);
+  }, 'kernel-logger');
+
+  const logger = {
+    info(module, msg, ctx) { return appendLogEntry('INFO', module, msg, null, ctx); },
+    warn(module, msg, ctx) { return appendLogEntry('WARN', module, msg, null, ctx); },
+    error(module, msg, stack, ctx) { return appendLogEntry('ERROR', module, msg, stack, ctx); },
+    getLogs(filter = {}) {
+      const { level, module: mod, query, limit = 200 } = filter;
+      let filtered = [...memoryLogs];
+      if (level && level !== 'ALL') {
+        filtered = filtered.filter(l => l.level === level.toUpperCase());
+      }
+      if (mod && mod !== 'ALL') {
+        filtered = filtered.filter(l => l.module.toLowerCase() === mod.toLowerCase());
+      }
+      if (query) {
+        const qLower = query.toLowerCase();
+        filtered = filtered.filter(l =>
+          (l.message && l.message.toLowerCase().includes(qLower)) ||
+          (l.module && l.module.toLowerCase().includes(qLower)) ||
+          (l.stack && l.stack.toLowerCase().includes(qLower))
+        );
+      }
+      return filtered.slice(-Math.min(limit, 500));
+    },
+    clearLogs() {
+      memoryLogs.length = 0;
+      try {
+        fs.writeFileSync(RUNTIME_LOG_PATH, '', 'utf8');
+      } catch {}
+      return true;
+    }
+  };
+
   // 4. Scoped Context Registry & Sandbox Isolation
   const scopeRegistry = new Map(); // pluginId -> resource sets
 
@@ -420,6 +531,7 @@ export function createKernelBus(context = {}) {
     db: dbWrapper,
     crypto: cryptoEngine,
     bus,
+    logger,
     dshContext,
     workerPool: null,
     dagScheduler: null,
@@ -444,6 +556,11 @@ export function createKernelBus(context = {}) {
         pluginId,
         db: dbWrapper,
         crypto: cryptoEngine,
+        logger: {
+          info: (msg, ctx) => logger.info(pluginId, msg, ctx),
+          warn: (msg, ctx) => logger.warn(pluginId, msg, ctx),
+          error: (msg, stack, ctx) => logger.error(pluginId, msg, stack, ctx)
+        },
         bus: {
           on(event, handler) {
             bus.on(event, handler, pluginId);
@@ -539,6 +656,17 @@ export function createKernelBus(context = {}) {
       };
 
       return scopedCtx;
+    },
+    getPluginScopeInfo(pluginId) {
+      if (!scopeRegistry.has(pluginId)) return { toolsCount: 0, apisCount: 0, listenersCount: 0 };
+      const s = scopeRegistry.get(pluginId);
+      return {
+        toolsCount: s.tools?.size || 0,
+        apisCount: s.apis?.size || 0,
+        listenersCount: s.listeners?.length || 0,
+        tools: Array.from(s.tools || []),
+        apis: Array.from(s.apis || [])
+      };
     },
     cleanupPluginScope(pluginId) {
       if (!scopeRegistry.has(pluginId)) return false;

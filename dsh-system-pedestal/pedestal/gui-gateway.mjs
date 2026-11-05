@@ -2,11 +2,13 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { exec } from 'node:child_process';
 
 const BASE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SHELL_HTML_PATH = path.join(BASE_DIR, 'gui-shell.html');
+import { runOnDemandTests, TEST_CATALOG } from './test-runner.mjs';
 
 export function createGuiGateway(kernel) {
   let server = null;
@@ -19,7 +21,8 @@ export function createGuiGateway(kernel) {
   const CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type'
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
+    'Access-Control-Max-Age': '86400'
   };
 
   // 1. JSON & SSE Helpers
@@ -93,23 +96,166 @@ export function createGuiGateway(kernel) {
     // System Overview
     if (pathname === '/api/sys/overview' && method === 'GET') {
       const dbStats = {};
+      let walSize = 0;
+      let dbSize = 0;
       try {
+        const vaultDir = path.join(os.homedir(), '.dsh', 'memory_vault');
+        const dbP = path.join(vaultDir, 'memory.db');
+        const walP = path.join(vaultDir, 'memory.db-wal');
+        if (fs.existsSync(dbP)) dbSize = fs.statSync(dbP).size;
+        if (fs.existsSync(walP)) walSize = fs.statSync(walP).size;
+
         const tables = ['memory_directories', 'knowledge_nodes', 'knowledge_edges', 'core_vault', 'node_embeddings', 'node_history'];
         for (const t of tables) {
           const row = kernel.db.get(`SELECT COUNT(*) as count FROM ${t}`);
           dbStats[t] = row?.count || 0;
         }
       } catch {}
+
+      const errorLogs = kernel.logger?.getLogs ? kernel.logger.getLogs({ level: 'ERROR', limit: 100 }) : [];
       return sendJson(res, 200, {
         status: 'online',
         version: '4.0.0',
         pid: process.pid,
+        port: 18765,
+        host: '127.0.0.1',
         uptime: process.uptime(),
+        watchdogHeartbeat: 'NORMAL',
         memoryUsage: process.memoryUsage(),
         dbStats,
+        sqliteFiles: {
+          dbSize,
+          walSize,
+          walFormatted: (walSize / 1024).toFixed(1) + ' KB',
+          dbFormatted: (dbSize / 1024).toFixed(1) + ' KB',
+          connected: true
+        },
+        errorCount: errorLogs.length,
         workerTelemetry: kernel.workerPool?.getTelemetry?.() || null,
-        views: Array.from(pluginViews.values())
+        views: Array.from(pluginViews.values()),
+        plugins: kernel.hotplugLoader?.getAllPluginStatus?.() || []
       });
+    }
+
+    // Verify Session Endpoint: 校验指定 sessionId 是否存活并提取标题与工作区
+    if (pathname === '/api/sys/verify-session' && method === 'GET') {
+      const sessionId = parsedUrl.searchParams.get('sessionId') || parsedUrl.searchParams.get('id');
+      if (!sessionId) {
+        return sendJson(res, 400, { exists: false, reason: '缺少 sessionId 参数' });
+      }
+
+      const cleanId = String(sessionId).trim().replace(/^session-/, '');
+      const sessionsBase = path.join(os.homedir(), '.dsh', 'sessions');
+      let found = false;
+      let matchedWorkspace = null;
+      let matchedSessionPath = null;
+      let sessionTitle = null;
+
+      if (fs.existsSync(sessionsBase)) {
+        try {
+          const wsDirs = fs.readdirSync(sessionsBase);
+          for (const ws of wsDirs) {
+            const wsPath = path.join(sessionsBase, ws);
+            try {
+              if (!fs.statSync(wsPath).isDirectory()) continue;
+              const sDirs = fs.readdirSync(wsPath);
+              for (const s of sDirs) {
+                const sClean = s.replace(/^session-/, '');
+                if (sClean === cleanId || s === sessionId) {
+                  found = true;
+                  matchedWorkspace = ws;
+                  matchedSessionPath = path.join(wsPath, s);
+                  break;
+                }
+              }
+              if (found) break;
+            } catch {}
+          }
+        } catch {}
+      }
+
+      // 尝试在 knowledge_nodes 中读取缓存的 source_session_title
+      if (found) {
+        try {
+          const nodeRow = kernel.db.get('SELECT source_session_title FROM knowledge_nodes WHERE source_session_id = ? OR source_session_id = ? LIMIT 1', [cleanId, sessionId]);
+          if (nodeRow?.source_session_title) {
+            sessionTitle = nodeRow.source_session_title;
+          }
+        } catch {}
+
+        kernel.logger?.info?.('GUI-API', `Session verified online: ${cleanId}`, { sessionId: cleanId, workspace: matchedWorkspace });
+        return sendJson(res, 200, {
+          exists: true,
+          sessionId: cleanId,
+          fullId: 'session-' + cleanId,
+          sessionTitle: sessionTitle || `会话 ${cleanId.slice(0, 8)}`,
+          workspace: matchedWorkspace,
+          path: matchedSessionPath
+        });
+      } else {
+        kernel.logger?.warn?.('GUI-API', `Session verification failed (not found or deleted): ${cleanId}`, { sessionId: cleanId });
+        return sendJson(res, 200, {
+          exists: false,
+          sessionId: cleanId,
+          sessionTitle: null,
+          reason: `原对话「${cleanId}」已被删除或归档移除，无法定位到原始上下文！`
+        });
+      }
+    }
+
+    // System Logs Stream / Query
+    if (pathname === '/api/sys/logs' && method === 'GET') {
+      const level = parsedUrl.searchParams.get('level') || 'ALL';
+      const mod = parsedUrl.searchParams.get('module') || 'ALL';
+      const query = parsedUrl.searchParams.get('query') || parsedUrl.searchParams.get('q') || '';
+      const limit = Number(parsedUrl.searchParams.get('limit') || 200);
+
+      const logs = kernel.logger?.getLogs ? kernel.logger.getLogs({ level, module: mod, query, limit }) : [];
+      return sendJson(res, 200, {
+        total: logs.length,
+        level,
+        module: mod,
+        logs
+      });
+    }
+
+    // System Logs Clear
+    if (pathname === '/api/sys/logs/clear' && method === 'POST') {
+      kernel.logger?.clearLogs?.();
+      kernel.logger?.info?.('Kernel', 'System logs manually cleared by operator');
+      return sendJson(res, 200, { success: true, message: '系统运行日志已清空' });
+    }
+
+    // On-Demand Tests Catalog
+    if (pathname === '/api/sys/tests/catalog' && method === 'GET') {
+      return sendJson(res, 200, {
+        suites: [
+          { id: 'all', name: '全部测试套件 (15项全量)', count: TEST_CATALOG.length },
+          { id: 'whitebox', name: '白盒内部机制测试', count: TEST_CATALOG.filter(t => t.suite === 'whitebox').length },
+          { id: 'blackbox', name: '黑盒接口契约与安全红线测试', count: TEST_CATALOG.filter(t => t.suite === 'blackbox').length },
+          { id: 'greybox', name: '灰盒并发、跨进程与工作流测试', count: TEST_CATALOG.filter(t => t.suite === 'greybox').length },
+          { id: 'regression', name: 'UI升级与原对话溯源专项回归', count: TEST_CATALOG.filter(t => t.suite === 'regression').length }
+        ],
+        total: TEST_CATALOG.length,
+        tests: TEST_CATALOG
+      });
+    }
+
+    // On-Demand Tests Runner
+    if (pathname === '/api/sys/tests/run' && method === 'POST') {
+      const body = await parseJsonBody(req);
+      const suites = Array.isArray(body?.suites) && body.suites.length > 0 ? body.suites : ['all'];
+      const testIds = Array.isArray(body?.testIds) ? body.testIds : null;
+      const filter = body?.filter || '';
+
+      kernel.logger?.info?.('TestRunner', `API 接收按需测试请求: suites=[${suites.join(', ')}], testIds=${testIds ? testIds.join(',') : 'all'}`);
+      try {
+        const report = await runOnDemandTests(kernel, { suites, testIds, filter });
+        return sendJson(res, 200, report);
+      } catch (err) {
+        kernel.logger?.error?.('TestRunner', '按需测试执行异常: ' + err.message, err.stack);
+        return sendJson(res, 500, { error: err.message, stack: err.stack });
+      }
     }
 
     // System Restart (Graceful daemon restart with Version Self-check & Anti-Zombie port release)
@@ -273,6 +419,41 @@ export function createGuiGateway(kernel) {
     };
     if (kernel?.dshContext?.tools?.register) kernel.dshContext.tools.register(tool);
     else if (kernel?.dshContext?.registerTool) kernel.dshContext.registerTool(tool);
+
+    const testTool = {
+      name: 'pedestal_run_tests',
+      description: 'Run on-demand black/white/grey-box and regression tests for dsh-system-pedestal microkernel',
+      parameters: {
+        type: 'object',
+        properties: {
+          suite: {
+            type: 'string',
+            enum: ['all', 'whitebox', 'blackbox', 'greybox', 'regression'],
+            description: '测试套件: all (全部15项) | whitebox (白盒机制) | blackbox (黑盒契约) | greybox (灰盒并发) | regression (专项回归)',
+            default: 'all'
+          },
+          filter: {
+            type: 'string',
+            description: '可选过滤关键字'
+          }
+        }
+      },
+      handler: async (args = {}) => {
+        const suite = args.suite || 'all';
+        const filter = args.filter || '';
+        const report = await runOnDemandTests(kernel, { suites: [suite], filter });
+        return {
+          total: report.total,
+          passed: report.passed,
+          failed: report.failed,
+          durationMs: report.durationMs,
+          summary: `执行完毕: ${report.passed}/${report.total} PASS (${report.durationMs}ms)`,
+          results: report.results
+        };
+      }
+    };
+    if (kernel?.dshContext?.tools?.register) kernel.dshContext.tools.register(testTool);
+    else if (kernel?.dshContext?.registerTool) kernel.dshContext.registerTool(testTool);
   }
 
   const gateway = {

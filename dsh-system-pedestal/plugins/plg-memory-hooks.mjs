@@ -139,12 +139,15 @@ export async function activate(ctx) {
       const tldr = safeContent.slice(0, 100).replace(/\n/g, ' ').trim();
       const tokens = estimateTokens(safeContent);
       const nodeId = 'inbox_' + (Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
+      const activeSessionId = args.source_session_id || process.env.DSH_SESSION_ID || process.env.SESSION_ID || ctx.dshContext?.sessionId || null;
+      const activeSessionTitle = args.source_session_title || process.env.DSH_SESSION_TITLE || ctx.dshContext?.sessionTitle || (activeSessionId ? `对话 ${activeSessionId.slice(0, 8)}` : null);
+      const activeWorkspace = args.source_workspace || process.env.DSH_WORKSPACE || process.cwd();
 
-      // 写入 knowledge_nodes (/Inbox 目录，drawer_level = 0, node_type = 'short_term_log')
+      // 写入 knowledge_nodes (/Inbox 目录，drawer_level = 0, node_type = 'short_term_log'，记录来源对话)
       ctx.db.run(
-        `INSERT INTO knowledge_nodes (id, dir_path, node_type, title, tldr, keywords, full_content, token_estimate, status, confidence, drawer_level, access_count, last_accessed_at, created_at)
-         VALUES (?, '/Inbox', 'short_term_log', ?, ?, ?, ?, ?, 'active', 0.5, 0, 1, ?, ?)`,
-        [nodeId, nodeTitle, tldr, tags, safeContent, tokens, now, now]
+        `INSERT INTO knowledge_nodes (id, dir_path, node_type, title, tldr, keywords, full_content, token_estimate, status, confidence, drawer_level, access_count, last_accessed_at, created_at, source_session_id, source_session_title, source_workspace)
+         VALUES (?, '/Inbox', 'short_term_log', ?, ?, ?, ?, ?, 'active', 0.5, 0, 1, ?, ?, ?, ?, ?)`,
+        [nodeId, nodeTitle, tldr, tags, safeContent, tokens, now, now, activeSessionId, activeSessionTitle, activeWorkspace]
       );
 
       // 统计当前 /Inbox 下 drawer_level = 0 的未处理碎片总数

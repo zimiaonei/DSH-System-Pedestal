@@ -310,16 +310,23 @@ export function createHotplugLoader(kernel) {
       return result;
     },
     getAllPluginStatus() {
-      return Array.from(pluginsMap.values()).map(p => ({
-        id: p.id,
-        name: p.name,
-        fileName: p.fileName,
-        version: p.version,
-        dependencies: p.dependencies,
-        state: p.state,
-        loadedAt: p.loadedAt,
-        errorMsg: p.errorMsg
-      }));
+      return Array.from(pluginsMap.values()).map(p => {
+        const scope = kernel?.getPluginScopeInfo?.(p.id) || { toolsCount: 0, apisCount: 0 };
+        return {
+          id: p.id,
+          name: p.name,
+          fileName: p.fileName,
+          version: p.version,
+          dependencies: p.dependencies,
+          state: p.state,
+          loadedAt: p.loadedAt,
+          errorMsg: p.errorMsg,
+          toolsCount: scope.toolsCount,
+          apisCount: scope.apisCount,
+          tools: scope.tools || [],
+          apis: scope.apis || []
+        };
+      });
     },
     async destroy() {
       for (const timer of debounceTimers.values()) {

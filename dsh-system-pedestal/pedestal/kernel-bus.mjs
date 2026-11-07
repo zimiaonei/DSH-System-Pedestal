@@ -27,40 +27,282 @@ export function createKernelBus(context = {}) {
     PRAGMA foreign_keys = ON;
   `);
 
+  function sanitizeBigInt(val) {
+    if (val === null || val === undefined) return val;
+    if (typeof val === 'bigint') return Number(val);
+    if (Array.isArray(val)) return val.map(sanitizeBigInt);
+    if (typeof val === 'object' && val.constructor === Object) {
+      const res = {};
+      for (const k of Object.keys(val)) {
+        res[k] = sanitizeBigInt(val[k]);
+      }
+      return res;
+    }
+    return val;
+  }
+
+  function normalizeParametersForDsh(rawParams) {
+    if (!rawParams || typeof rawParams !== 'object') {
+      return {
+        type: 'object',
+        properties: {},
+        required: []
+      };
+    }
+
+    let sanitized = rawParams;
+    if (typeof rawParams.toJSON === 'function') {
+      try {
+        sanitized = rawParams.toJSON();
+      } catch {}
+    } else if (rawParams.dict && typeof rawParams.dict === 'object') {
+      try {
+        sanitized = rawParams.dict;
+      } catch {}
+    }
+
+    try {
+      const seen = new WeakSet();
+      const clean = JSON.parse(JSON.stringify(sanitized, (key, value) => {
+        if (typeof value === 'object' && value !== null) {
+          if (seen.has(value)) return undefined;
+          seen.add(value);
+        }
+        if (typeof value === 'bigint') return Number(value);
+        if (typeof value === 'function' || typeof value === 'symbol' || value === undefined) {
+          return undefined;
+        }
+        return value;
+      }));
+
+      if (!clean || typeof clean !== 'object' || Array.isArray(clean)) {
+        return {
+          type: 'object',
+          properties: {},
+          required: []
+        };
+      }
+
+      if (clean.type !== 'object') {
+        clean.type = 'object';
+      }
+      if (!clean.properties || typeof clean.properties !== 'object' || Array.isArray(clean.properties)) {
+        clean.properties = {};
+      }
+      if (!Array.isArray(clean.required)) {
+        clean.required = [];
+      }
+      return clean;
+    } catch {
+      return {
+        type: 'object',
+        properties: {},
+        required: []
+      };
+    }
+  }
+
+  function normalizeToolForDsh(toolDef) {
+    if (!toolDef || typeof toolDef !== 'object') return toolDef;
+    const tool = { ...toolDef };
+    if (!tool.execute && typeof tool.handler === 'function') {
+      tool.execute = async (args, exec) => await tool.handler(args, exec);
+    }
+    if (!tool.handler && typeof tool.execute === 'function') {
+      tool.handler = async (args, exec) => await tool.execute(args, exec);
+    }
+    tool.parameters = normalizeParametersForDsh(tool.parameters);
+    if (!tool.output || typeof tool.output !== 'object') {
+      tool.output = {
+        schema: { type: 'object', additionalProperties: true },
+        render: (args, value) => [
+          { type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value ?? null, (_, v) => typeof v === 'bigint' ? Number(v) : v, 2) }
+        ]
+      };
+    } else {
+      const output = { ...tool.output };
+      if (!output.schema) {
+        output.schema = { type: 'object', additionalProperties: true };
+      }
+      if (typeof output.render !== 'function') {
+        output.render = (args, value) => [
+          { type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value ?? null, (_, v) => typeof v === 'bigint' ? Number(v) : v, 2) }
+        ];
+      }
+      tool.output = output;
+    }
+    return tool;
+  }
+
+  function sanitizeParams(params = []) {
+    return params.map(p => (p === undefined ? null : p));
+  }
+
   const dbWrapper = {
     raw: db,
     query(sql, params = []) {
-      return db.prepare(sql).all(...params);
+      return sanitizeBigInt(db.prepare(sql).all(...sanitizeParams(params)));
     },
     get(sql, params = []) {
-      return db.prepare(sql).get(...params);
+      return sanitizeBigInt(db.prepare(sql).get(...sanitizeParams(params)));
     },
     run(sql, params = []) {
-      return db.prepare(sql).run(...params);
+      const res = db.prepare(sql).run(...sanitizeParams(params));
+      return {
+        changes: Number(res.changes || 0),
+        lastInsertRowid: Number(res.lastInsertRowid || 0)
+      };
     },
     exec(sql) {
       return db.exec(sql);
     },
-    backup() {
+    backup(customLabel = '') {
+      if (!fs.existsSync(BACKUPS_DIR)) fs.mkdirSync(BACKUPS_DIR, { recursive: true });
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const backupPath = path.join(BACKUPS_DIR, `memory-${timestamp}.db`);
-      fs.copyFileSync(DB_PATH, backupPath);
+      const label = customLabel ? `_${customLabel}` : '';
+      const backupSubDir = path.join(BACKUPS_DIR, `backup_${timestamp}${label}`);
+      fs.mkdirSync(backupSubDir, { recursive: true });
 
-      // Rotate backups, keep latest 5
+      // 1. 备份核心 SQLite 数据库 (memory.db)
+      const dbBackupFile = path.join(backupSubDir, 'memory.db');
+      fs.copyFileSync(DB_PATH, dbBackupFile);
+
+      // 2. 备份冷库归档文件 (dropped_archive.jsonl)
+      const archiveFile = path.join(VAULT_DIR, 'dropped_archive.jsonl');
+      let archiveBackedUp = false;
+      if (fs.existsSync(archiveFile)) {
+        fs.copyFileSync(archiveFile, path.join(backupSubDir, 'dropped_archive.jsonl'));
+        archiveBackedUp = true;
+      }
+
+      // 3. 备份主密钥文件 (.master_key)
+      if (fs.existsSync(KEY_PATH)) {
+        fs.copyFileSync(KEY_PATH, path.join(backupSubDir, '.master_key'));
+      }
+
+      // 4. 导出关键模型配置与元数据清单 (manifest.json)
+      let modelConfigs = [];
       try {
-        const files = fs.readdirSync(BACKUPS_DIR)
-          .filter(f => f.startsWith('memory-') && f.endsWith('.db'))
-          .map(f => ({ name: f, path: path.join(BACKUPS_DIR, f), time: fs.statSync(path.join(BACKUPS_DIR, f)).mtimeMs }))
+        modelConfigs = db.prepare("SELECT * FROM model_provider_configs").all();
+      } catch {}
+
+      let tablesSummary = {};
+      try {
+        const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all();
+        for (const t of tables) {
+          try {
+            const countRow = db.prepare(`SELECT COUNT(*) as c FROM ${t.name}`).get();
+            tablesSummary[t.name] = Number(countRow?.c || 0);
+          } catch {}
+        }
+      } catch {}
+
+      const manifestData = {
+        version: '4.1.0',
+        created_at: new Date().toISOString(),
+        backup_id: `backup_${timestamp}${label}`,
+        archive_included: archiveBackedUp,
+        model_configs_count: modelConfigs.length,
+        tables_summary: tablesSummary
+      };
+      fs.writeFileSync(path.join(backupSubDir, 'manifest.json'), JSON.stringify(manifestData, null, 2), 'utf-8');
+
+      // 记录审计日志
+      try {
+        db.prepare(`
+          INSERT INTO security_audit_log (action_type, trigger_source, target_resource, details_json, before_snapshot_summary, status)
+          VALUES ('full_backup', 'system', ?, ?, ?, 'success')
+        `).run(backupSubDir, JSON.stringify(manifestData), `Tables: ${Object.keys(tablesSummary).length}`);
+      } catch {}
+
+      // Rotate backups: 保留最近 10 个备份包
+      try {
+        const dirs = fs.readdirSync(BACKUPS_DIR)
+          .filter(f => f.startsWith('backup_') || f.startsWith('memory-'))
+          .map(f => ({ name: f, path: path.join(BACKUPS_DIR, f), time: Number(fs.statSync(path.join(BACKUPS_DIR, f)).mtimeMs) }))
           .sort((a, b) => b.time - a.time);
 
-        if (files.length > 5) {
-          for (const file of files.slice(5)) {
-            try { fs.unlinkSync(file.path); } catch {}
+        if (dirs.length > 10) {
+          for (const item of dirs.slice(10)) {
+            try {
+              if (fs.statSync(item.path).isDirectory()) {
+                fs.rmSync(item.path, { recursive: true, force: true });
+              } else {
+                fs.unlinkSync(item.path);
+              }
+            } catch {}
           }
         }
       } catch {}
 
-      return backupPath;
+      return {
+        backup_id: `backup_${timestamp}${label}`,
+        backup_path: backupSubDir,
+        manifest: manifestData
+      };
+    },
+    listBackups() {
+      if (!fs.existsSync(BACKUPS_DIR)) return [];
+      const entries = fs.readdirSync(BACKUPS_DIR)
+        .filter(f => f.startsWith('backup_'))
+        .map(f => {
+          const fullPath = path.join(BACKUPS_DIR, f);
+          const stat = fs.statSync(fullPath);
+          let manifest = null;
+          try {
+            const mFile = path.join(fullPath, 'manifest.json');
+            if (fs.existsSync(mFile)) manifest = JSON.parse(fs.readFileSync(mFile, 'utf-8'));
+          } catch {}
+          return {
+            id: f,
+            path: fullPath,
+            created_at: manifest?.created_at || new Date(stat.mtimeMs).toISOString(),
+            manifest
+          };
+        })
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      return entries;
+    },
+    restore(backupId) {
+      if (!backupId) throw new Error('缺少 backupId');
+      const backupSubDir = path.join(BACKUPS_DIR, backupId);
+      if (!fs.existsSync(backupSubDir)) {
+        throw new Error(`备份包未找到: ${backupId}`);
+      }
+
+      const backupDb = path.join(backupSubDir, 'memory.db');
+      if (!fs.existsSync(backupDb)) {
+        throw new Error(`备份包中缺少 memory.db: ${backupId}`);
+      }
+
+      // 恢复前先自动创建安全快照
+      const safetyTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const safetyDb = path.join(BACKUPS_DIR, `safety_pre_restore_${safetyTimestamp}.db`);
+      fs.copyFileSync(DB_PATH, safetyDb);
+
+      // 复制恢复 memory.db
+      fs.copyFileSync(backupDb, DB_PATH);
+
+      // 复制恢复 dropped_archive.jsonl
+      const backupArchive = path.join(backupSubDir, 'dropped_archive.jsonl');
+      const targetArchive = path.join(VAULT_DIR, 'dropped_archive.jsonl');
+      if (fs.existsSync(backupArchive)) {
+        fs.copyFileSync(backupArchive, targetArchive);
+      }
+
+      // 写入恢复审计日志
+      try {
+        db.prepare(`
+          INSERT INTO security_audit_log (action_type, trigger_source, target_resource, details_json, before_snapshot_summary, status)
+          VALUES ('database_restore', 'ui_manual', ?, ?, ?, 'success')
+        `).run(backupId, JSON.stringify({ restored_from: backupId, safety_copy: safetyDb }), `Pre-restore snapshot: ${safetyDb}`);
+      } catch {}
+
+      return {
+        success: true,
+        restored_from: backupId,
+        safety_backup: safetyDb
+      };
     }
   };
 
@@ -143,6 +385,107 @@ export function createKernelBus(context = {}) {
       auth_tag TEXT,
       expires_at INTEGER
     );
+
+    CREATE TABLE IF NOT EXISTS repo_file_index (
+      file_id TEXT PRIMARY KEY,
+      workspace_path TEXT,
+      rel_path TEXT,
+      file_size INTEGER,
+      mtime_ms INTEGER,
+      sha256_hash TEXT,
+      git_commit TEXT,
+      language TEXT,
+      l0_skeleton TEXT,
+      l1_summary TEXT,
+      imports_json TEXT,
+      token_count INTEGER,
+      last_indexed_at TEXT,
+      UNIQUE(workspace_path, rel_path)
+    );
+
+    CREATE TABLE IF NOT EXISTS repo_summaries (
+      workspace_path TEXT PRIMARY KEY,
+      project_name TEXT,
+      tech_stack TEXT,
+      dir_structure_md TEXT,
+      entry_points_json TEXT,
+      dep_graph_json TEXT,
+      ignore_rules_json TEXT,
+      last_scan_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS token_usage_ledger (
+      call_id TEXT PRIMARY KEY,
+      session_id TEXT,
+      workspace_path TEXT,
+      task_type TEXT,
+      tier_level TEXT,
+      provider TEXT,
+      model_name TEXT,
+      input_tokens INTEGER,
+      output_tokens INTEGER,
+      cached_tokens INTEGER DEFAULT 0,
+      reasoning_tokens INTEGER DEFAULT 0,
+      breakdown_json TEXT,
+      duration_ms INTEGER,
+      estimated_cost_usd REAL,
+      actual_cost_usd REAL,
+      cache_hit INTEGER DEFAULT 0,
+      status TEXT,
+      created_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS model_provider_configs (
+      config_id TEXT PRIMARY KEY,
+      provider TEXT,
+      model_name TEXT,
+      tier_binding TEXT,
+      role TEXT,
+      input_price_per_m REAL,
+      output_price_per_m REAL,
+      cache_read_price_per_m REAL,
+      max_context INTEGER,
+      daily_budget_usd REAL,
+      enabled INTEGER DEFAULT 1,
+      updated_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS project_continuity_state (
+      workspace_path TEXT PRIMARY KEY,
+      current_phase TEXT,
+      last_completed_tasks_json TEXT,
+      unresolved_issues_json TEXT,
+      next_steps_json TEXT,
+      active_constraints_json TEXT,
+      last_session_id TEXT,
+      updated_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS architecture_decisions (
+      adr_id TEXT PRIMARY KEY,
+      workspace_path TEXT,
+      title TEXT,
+      status TEXT,
+      context_problem TEXT,
+      decision_made TEXT,
+      rationale_basis TEXT,
+      consequences TEXT,
+      superseded_by TEXT,
+      source_session_id TEXT,
+      created_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS security_audit_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+      action_type TEXT NOT NULL,
+      trigger_source TEXT NOT NULL,
+      target_resource TEXT NOT NULL,
+      details_json TEXT,
+      before_snapshot_summary TEXT,
+      status TEXT DEFAULT 'success',
+      ip_or_caller TEXT
+    );
   `);
 
   // Idempotent column check for knowledge_nodes
@@ -156,6 +499,19 @@ export function createKernelBus(context = {}) {
     }
     if (!existingCols.includes('source_workspace')) {
       db.exec("ALTER TABLE knowledge_nodes ADD COLUMN source_workspace TEXT;");
+    }
+    // D 记忆时序事实字段 (current / historical)
+    if (!existingCols.includes('fact_state')) {
+      db.exec("ALTER TABLE knowledge_nodes ADD COLUMN fact_state TEXT DEFAULT 'current';");
+    }
+    if (!existingCols.includes('valid_from')) {
+      db.exec("ALTER TABLE knowledge_nodes ADD COLUMN valid_from TEXT;");
+    }
+    if (!existingCols.includes('valid_until')) {
+      db.exec("ALTER TABLE knowledge_nodes ADD COLUMN valid_until TEXT;");
+    }
+    if (!existingCols.includes('source_confidence')) {
+      db.exec("ALTER TABLE knowledge_nodes ADD COLUMN source_confidence REAL DEFAULT 0.9;");
     }
   } catch (err) {
     console.warn('[Pedestal:DB] Migration check failed:', err.message);
@@ -549,6 +905,22 @@ export function createKernelBus(context = {}) {
     bindHotplugLoader(loader) {
       this.hotplugLoader = loader;
     },
+    promptHooks: new Set(),
+    addSystemPromptHook(fn) {
+      this.promptHooks.add(fn);
+    },
+    async getSystemPrompts(args = {}) {
+      const results = [];
+      for (const fn of this.promptHooks) {
+        try {
+          const res = await fn(args);
+          if (res && typeof res === 'string') results.push(res);
+        } catch (err) {
+          logger.warn('Kernel', `Prompt hook error: ${err.message}`);
+        }
+      }
+      return results;
+    },
     createScopedContext(pluginId) {
       const scope = ensureScope(pluginId);
 
@@ -575,24 +947,67 @@ export function createKernelBus(context = {}) {
             bus.emit(event, payload);
           }
         },
+        hooks: {
+          registerSystemPromptEnhancer(fn) {
+            scope.promptHooks.add(fn);
+            kernel.promptHooks.add(fn);
+            if (dshContext?.hooks?.registerSystemPromptEnhancer) {
+              try { dshContext.hooks.registerSystemPromptEnhancer(fn); } catch {}
+            }
+          }
+        },
+        addSystemPromptHook(fn) {
+          scope.promptHooks.add(fn);
+          kernel.promptHooks.add(fn);
+          if (typeof dshContext?.addSystemPromptHook === 'function') {
+            try { dshContext.addSystemPromptHook(fn); } catch {}
+          }
+        },
         tools: {
           register(toolDef) {
             const toolName = toolDef.name;
             scope.tools.add(toolName);
+            const normalized = normalizeToolForDsh(toolDef);
+            if (!kernel.tools) kernel.tools = new Map();
+            kernel.tools.set(toolName, normalized);
+            if (!kernel.status) kernel.status = {};
+            if (!kernel.status.tools) kernel.status.tools = {};
+            kernel.status.tools[toolName] = normalized;
+            try {
+              const existingHostTool = dshContext.tools?.get?.(toolName);
+              if (existingHostTool && typeof existingHostTool === 'object') {
+                existingHostTool.handler = normalized.handler;
+                existingHostTool.execute = normalized.execute;
+                existingHostTool.description = normalized.description;
+                existingHostTool.parameters = normalized.parameters;
+              }
+              if (dshContext.tools?._tools instanceof Map) {
+                dshContext.tools._tools.set(toolName, normalized);
+              }
+            } catch {}
             if (dshContext.tools?.register) {
-              dshContext.tools.register(toolDef);
+              dshContext.tools.register(normalized);
             } else if (dshContext.registerTool) {
-              dshContext.registerTool(toolDef);
+              dshContext.registerTool(normalized);
             } else if (dshContext.registry?.register) {
-              dshContext.registry.register(toolDef);
+              dshContext.registry.register(normalized);
             }
           },
           unregister(toolName) {
             scope.tools.delete(toolName);
+            if (kernel.tools) kernel.tools.delete(toolName);
+            if (kernel.status?.tools) delete kernel.status.tools[toolName];
             if (dshContext.tools?.unregister) {
               dshContext.tools.unregister(toolName);
             } else if (dshContext.unregisterTool) {
               dshContext.unregisterTool(toolName);
+            }
+          },
+          addSystemPromptHook(fn) {
+            scope.promptHooks.add(fn);
+            kernel.promptHooks.add(fn);
+            if (typeof dshContext?.tools?.addSystemPromptHook === 'function') {
+              try { dshContext.tools.addSystemPromptHook(fn); } catch {}
             }
           }
         },
@@ -720,6 +1135,12 @@ export function createKernelBus(context = {}) {
         kernel.dagScheduler?.unregisterTemplate?.(tpl);
       }
       scope.dagTemplates.clear();
+
+      // 6. Deregister Prompt Hooks
+      for (const hook of scope.promptHooks) {
+        kernel.promptHooks.delete(hook);
+      }
+      scope.promptHooks.clear();
 
       // Remove from scope registry
       scopeRegistry.delete(pluginId);

@@ -171,7 +171,7 @@ export async function activate(ctx) {
   // 2.1 memory_revive_cold (冷数据检索与一键复活)
   ctx.tools.register({
     name: 'memory_revive_cold',
-    description: '冷库打捞与复活：从 ~/.dsh/memory_vault/dropped_archive.jsonl 流式检索已衰减沉睡的历史节点并一键复活回主知识库（赋予 Lv.2 初始抽屉等级）',
+    description: '检索冷库归档并一键复活到活跃主库',
     parameters: {
       type: 'object',
       properties: {
@@ -306,7 +306,7 @@ export async function activate(ctx) {
   // 2.2 memory_node_rollback (节点多版本时光机与误改回滚)
   ctx.tools.register({
     name: 'memory_node_rollback',
-    description: '知识节点版本时光机：查看节点历史版本快照列表或一键回滚到指定历史版本',
+    description: '节点历史版本时光机(查看快照或一键回滚)',
     parameters: {
       type: 'object',
       properties: {

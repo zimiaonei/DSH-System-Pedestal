@@ -160,6 +160,7 @@ export function createHotplugLoader(kernel) {
         inst = await mod.bootstrap(ctx);
       }
 
+      pluginRecord.scopeCtx = ctx;
       pluginRecord.instance = inst;
       pluginRecord.state = PluginState.ACTIVE;
       pluginRecord.loadedAt = Date.now();
@@ -212,10 +213,11 @@ export function createHotplugLoader(kernel) {
     console.log(`[HotplugLoader] Draining plugin "${pluginId}"...`);
 
     try {
+      const scopeCtx = pluginRecord.scopeCtx;
       if (pluginRecord.instance && typeof pluginRecord.instance.deactivate === 'function') {
-        await pluginRecord.instance.deactivate();
+        await pluginRecord.instance.deactivate(scopeCtx);
       } else if (pluginRecord.module && typeof pluginRecord.module.deactivate === 'function') {
-        await pluginRecord.module.deactivate();
+        await pluginRecord.module.deactivate(scopeCtx);
       }
     } catch (err) {
       console.warn(`[HotplugLoader] Error during deactivate() in plugin "${pluginId}":`, err.message);
@@ -289,7 +291,7 @@ export function createHotplugLoader(kernel) {
     init(kernelRef, targetPluginsDir) {
       if (kernelRef) kernel = kernelRef;
       if (targetPluginsDir) {
-        pluginsDir = targetPluginsDir;
+        pluginsDir = targetPluginsDir; console.log('[DEBUG] Plugins directory:', targetPluginsDir);
         startWatcher(targetPluginsDir);
       }
       return this;

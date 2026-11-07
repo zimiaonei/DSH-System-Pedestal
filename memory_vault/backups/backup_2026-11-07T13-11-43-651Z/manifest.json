@@ -1,0 +1,31 @@
+{
+  "version": "4.1.0",
+  "created_at": "2026-11-07T13:11:43.653Z",
+  "backup_id": "backup_2026-11-07T13-11-43-651Z",
+  "archive_included": true,
+  "model_configs_count": 35,
+  "tables_summary": {
+    "memory_directories": 9,
+    "knowledge_nodes": 14,
+    "knowledge_edges": 17,
+    "core_vault": 14,
+    "node_embeddings": 27,
+    "node_history": 246,
+    "sqlite_sequence": 3,
+    "knowledge_fts_data": 2,
+    "knowledge_fts_idx": 0,
+    "knowledge_fts_content": 0,
+    "knowledge_fts_docsize": 0,
+    "knowledge_fts_config": 1,
+    "vault_leases": 61,
+    "repo_file_index": 2335,
+    "repo_summaries": 3,
+    "token_usage_ledger": 48,
+    "model_provider_configs": 35,
+    "project_continuity_state": 2,
+    "architecture_decisions": 3,
+    "security_audit_log": 159,
+    "knowledge_fts": 0,
+    "model_fallback_events": 8
+  }
+}

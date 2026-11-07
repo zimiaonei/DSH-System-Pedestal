@@ -67,7 +67,7 @@ export async function activate(ctx) {
   // 1. 注册 Tool: memory_dir_tree
   ctx.tools.register({
     name: 'memory_dir_tree',
-    description: 'L0 级虚拟文件系统目录树导航，统计各目录下 active 知识节点数及 /Vault 密钥数，自动匹配当前工作区',
+    description: '查看记忆目录树大纲与当前工作区绑定',
     parameters: {
       type: 'object',
       properties: {
@@ -161,7 +161,7 @@ export async function activate(ctx) {
   // 2. 注册 Tool: memory_dir_manage
   ctx.tools.register({
     name: 'memory_dir_manage',
-    description: '管理虚拟文件系统目录（新建、更新目录元信息与本地仓库路径绑定，或批量移动知识节点）',
+    description: '管理记忆虚拟目录(新建/更新绑定/移动节点)',
     parameters: {
       type: 'object',
       properties: {
@@ -280,7 +280,7 @@ export async function activate(ctx) {
   // 3. 注册 Tool: vault_store_core
   ctx.tools.register({
     name: 'vault_store_core',
-    description: '将敏感凭据、API Key、私钥通过硬件级 AES-256-GCM 加密安全持久化至 core_vault 表中（永不随抽屉衰减遗忘）',
+    description: '加密保存API Key/凭据(AES-256-GCM隔离)',
     parameters: {
       type: 'object',
       properties: {
@@ -358,7 +358,7 @@ export async function activate(ctx) {
   // 4. 注册 Tool: vault_fetch_core
   ctx.tools.register({
     name: 'vault_fetch_core',
-    description: '获取保险箱机密：支持安全的 lease 模式（默认返回 {{VAULT_SECRET:key_name}} 占位符令牌与 5 分钟用后即焚授权）及 plaintext 明文模式',
+    description: '获取凭据(默认lease占位符安全模式)',
     parameters: {
       type: 'object',
       properties: {

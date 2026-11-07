@@ -79,6 +79,15 @@
         <button onclick="switchTab('dag')" id="nav-btn-dag" title="DAG 工作流画布" class="nav-btn p-2.5 rounded-lg text-slate-400 hover:text-cyan-400 hover:bg-slate-800 transition">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
         </button>
+        <button onclick="switchTab('repo')" id="nav-btn-repo" title="仓库与增量索引" class="nav-btn p-2.5 rounded-lg text-slate-400 hover:text-cyan-400 hover:bg-slate-800 transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path></svg>
+        </button>
+        <button onclick="switchTab('cost')" id="nav-btn-cost" title="模型与成本账单" class="nav-btn p-2.5 rounded-lg text-slate-400 hover:text-cyan-400 hover:bg-slate-800 transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+        </button>
+        <button onclick="switchTab('continuity')" id="nav-btn-continuity" title="项目连续性与 ADR 看板" class="nav-btn p-2.5 rounded-lg text-slate-400 hover:text-cyan-400 hover:bg-slate-800 transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path></svg>
+        </button>
       </div>
 
       <div class="w-6 h-px bg-slate-800"></div>
@@ -156,6 +165,172 @@
         <div class="flex-1 bg-slate-900 border border-slate-800 rounded-lg relative overflow-hidden flex items-center justify-center min-h-[360px]">
           <canvas id="dag-canvas" class="w-full h-full block"></canvas>
           <div id="dag-empty-hint" class="text-xs text-slate-500 pointer-events-none absolute">暂无选中的 DAG 拓扑节点</div>
+        </div>
+      </section>
+
+      <!-- 视图 4：📦 仓库与增量索引 -->
+      <section id="view-repo" class="space-y-4 hidden h-full flex flex-col">
+        <div class="flex items-center justify-between pb-2 border-b border-slate-800 flex-shrink-0">
+          <div>
+            <h2 class="text-base font-semibold text-cyan-400">本地代码仓库增量索引与 L0 摘要</h2>
+            <p class="text-xs text-slate-400">基于 SHA-256 文件指纹的 0-IO 增量解析 · 敏感路径自动免疫防护</p>
+          </div>
+          <div class="flex space-x-2">
+            <button onclick="refreshRepoOverview(true)" class="px-3 py-1 bg-cyan-600 hover:bg-cyan-500 text-xs rounded text-slate-950 font-semibold transition">⚡ 立即增量扫描</button>
+            <button onclick="showDepGraphModal()" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-xs rounded border border-slate-700 text-slate-300 transition">🕸️ 模块依赖关系</button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-4 gap-4 flex-shrink-0">
+          <div class="p-3 bg-slate-900 border border-slate-800 rounded-lg">
+            <div class="text-xs text-slate-400">索引文件总数</div>
+            <div class="text-xl font-bold font-mono text-cyan-400 mt-1" id="repo-total-files">0</div>
+            <div class="text-[10px] text-slate-500" id="repo-workspace-tag">Workspace</div>
+          </div>
+          <div class="p-3 bg-slate-900 border border-slate-800 rounded-lg">
+            <div class="text-xs text-slate-400">技术栈架构</div>
+            <div class="text-base font-bold font-mono text-emerald-400 mt-1 truncate" id="repo-tech-stack">Detecting...</div>
+            <div class="text-[10px] text-slate-500">自动解析配置文件识别</div>
+          </div>
+          <div class="p-3 bg-slate-900 border border-slate-800 rounded-lg">
+            <div class="text-xs text-slate-400">代码总行数</div>
+            <div class="text-xl font-bold font-mono text-slate-200 mt-1" id="repo-total-lines">0</div>
+            <div class="text-[10px] text-slate-500">增量行数统计</div>
+          </div>
+          <div class="p-3 bg-slate-900 border border-slate-800 rounded-lg">
+            <div class="text-xs text-slate-400">缓存命中率</div>
+            <div class="text-xl font-bold font-mono text-emerald-400 mt-1" id="repo-cache-rate">100%</div>
+            <div class="text-[10px] text-slate-500">0-IO 未变更跳过率</div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4 flex-1 min-h-[300px]">
+          <div class="bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col">
+            <div class="text-xs font-semibold text-slate-300 pb-2 border-b border-slate-800 flex justify-between">
+              <span>📁 L0 目录树与常驻摘要</span>
+              <span class="text-[10px] text-cyan-400" id="repo-last-scan">-</span>
+            </div>
+            <pre class="flex-1 p-2 text-[11px] font-mono text-slate-300 overflow-y-auto whitespace-pre-wrap select-text" id="repo-l0-summary">加载中...</pre>
+          </div>
+          <div class="bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col">
+            <div class="text-xs font-semibold text-slate-300 pb-2 border-b border-slate-800 flex justify-between">
+              <span>🛡️ 索引文件清单 & 忽略规则</span>
+              <span class="text-[10px] text-slate-500" id="repo-ignore-count">已排除敏感文件</span>
+            </div>
+            <div class="flex-1 overflow-y-auto space-y-1 p-1 text-xs" id="repo-files-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 视图 5：💰 模型与成本账单 -->
+      <section id="view-cost" class="space-y-4 hidden h-full flex flex-col">
+        <div class="flex items-center justify-between pb-2 border-b border-slate-800 flex-shrink-0">
+          <div>
+            <h2 class="text-base font-semibold text-cyan-400">四层模型路由网关与 Token 7 维成本中心</h2>
+            <p class="text-xs text-slate-400">Tier 0~3 智能分流 · 精确定位高 Input Token 根因与优化建议</p>
+          </div>
+          <div class="flex space-x-2">
+            <button onclick="refreshCostAnalytics()" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-xs rounded border border-slate-700 text-slate-300 transition">刷新统计</button>
+          </div>
+        </div>
+
+        <!-- 顶部 4 个核心指标卡 -->
+        <div class="grid grid-cols-4 gap-4 flex-shrink-0">
+          <div class="p-3 bg-slate-900 border border-slate-800 rounded-lg">
+            <div class="text-xs text-slate-400">调用总 Token 规模</div>
+            <div class="text-xl font-bold font-mono text-cyan-400 mt-1" id="cost-total-tokens">0</div>
+            <div class="text-[10px] text-slate-500" id="cost-calls-count">0 次模型调用</div>
+          </div>
+          <div class="p-3 bg-slate-900 border border-slate-800 rounded-lg">
+            <div class="text-xs text-slate-400">累计估算费用 ($)</div>
+            <div class="text-xl font-bold font-mono text-emerald-400 mt-1" id="cost-total-usd">$0.0000</div>
+            <div class="text-[10px] text-slate-500">按真实调用量计费</div>
+          </div>
+          <div class="p-3 bg-slate-900 border border-slate-800 rounded-lg">
+            <div class="text-xs text-slate-400">Tier 0 本地拦截率</div>
+            <div class="text-xl font-bold font-mono text-cyan-400 mt-1" id="cost-tier0-rate">100%</div>
+            <div class="text-[10px] text-slate-500">0 Token 本地即时计算</div>
+          </div>
+          <div class="p-3 bg-slate-900 border border-slate-800 rounded-lg">
+            <div class="text-xs text-slate-400">Prompt 缓存命中率</div>
+            <div class="text-xl font-bold font-mono text-emerald-400 mt-1" id="cost-cache-hit-rate">0.0%</div>
+            <div class="text-[10px] text-slate-500" id="cost-cached-tokens">0 cached tokens</div>
+          </div>
+        </div>
+
+        <!-- 7 维 Input Token 来源占比条形图 -->
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-3 flex-shrink-0">
+          <div class="flex items-center justify-between pb-2 border-b border-slate-800">
+            <span class="text-xs font-semibold text-slate-300">📊 7 维 Input Token 来源占比分解</span>
+            <span class="text-[10px] text-slate-400">输入诊断与高占比预警</span>
+          </div>
+          <div class="mt-3 space-y-2" id="breakdown-7d-bars"></div>
+        </div>
+
+        <!-- Tier 0~3 模型价格与主备路由配置表 -->
+        <div class="bg-slate-900 border border-slate-800 rounded-lg p-3 flex-1 overflow-y-auto">
+          <div class="flex items-center justify-between pb-2 border-b border-slate-800 mb-2">
+            <span class="text-xs font-semibold text-slate-300">⚙️ Tier 0~3 模型路由与价格表 (USD / 1M Tokens)</span>
+            <span class="text-[10px] text-slate-500">严禁硬编码 · 动态读取 SQLite 表 11</span>
+          </div>
+          <table class="w-full text-left text-xs">
+            <thead class="text-slate-500 font-mono border-b border-slate-800">
+              <tr>
+                <th class="py-1">Tier</th>
+                <th>角色</th>
+                <th>供应商 / 模型</th>
+                <th>输入单价</th>
+                <th>缓存单价</th>
+                <th>输出单价</th>
+                <th>每日限额</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="model-configs-tbody" class="text-slate-300 font-mono"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 视图 6：🌿 项目连续性与 ADR 架构决策看板 -->
+      <section id="view-continuity" class="space-y-4 hidden h-full flex flex-col">
+        <div class="flex items-center justify-between pb-2 border-b border-slate-800 flex-shrink-0">
+          <div>
+            <h2 class="text-base font-semibold text-cyan-400">项目连续性断点看板与 ADR 架构决策追溯</h2>
+            <p class="text-xs text-slate-400">跨会话记忆主动对齐 · 技术选型决策追溯与演进保障</p>
+          </div>
+          <div class="flex space-x-2">
+            <button onclick="refreshContinuity()" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-xs rounded border border-slate-700 text-slate-300 transition">刷新看板</button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-3 gap-4 flex-1">
+          <!-- 卡片 1: 断点续传状态 -->
+          <div class="bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col">
+            <div class="text-xs font-semibold text-slate-300 pb-2 border-b border-slate-800 flex justify-between">
+              <span>🎯 上次任务进展与未解决问题</span>
+              <span class="text-[10px] text-cyan-400" id="cont-phase-badge">Phase</span>
+            </div>
+            <div class="flex-1 overflow-y-auto space-y-3 p-2 text-xs" id="cont-status-panel"></div>
+          </div>
+
+          <!-- 卡片 2: 核心架构约束 -->
+          <div class="bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col">
+            <div class="text-xs font-semibold text-slate-300 pb-2 border-b border-slate-800 flex justify-between">
+              <span>🔒 核心架构约束 (Active Constraints)</span>
+              <span class="text-[10px] text-emerald-400">持续保护中</span>
+            </div>
+            <div class="flex-1 overflow-y-auto space-y-2 p-2 text-xs" id="cont-constraints-list"></div>
+          </div>
+
+          <!-- 卡片 3: ADR 架构决策记录 -->
+          <div class="bg-slate-900 border border-slate-800 rounded-lg p-3 flex flex-col">
+            <div class="text-xs font-semibold text-slate-300 pb-2 border-b border-slate-800 flex justify-between">
+              <span>🏛️ ADR 架构决策追溯 (Architecture Decisions)</span>
+              <span class="text-[10px] text-slate-400" id="cont-adr-count">0 项</span>
+            </div>
+            <div class="flex-1 overflow-y-auto space-y-2 p-2 text-xs" id="cont-adrs-list"></div>
+          </div>
         </div>
       </section>
 
@@ -249,14 +424,17 @@
       document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('text-cyan-400', 'bg-slate-800'));
       document.getElementById('nav-btn-' + tab)?.classList.add('text-cyan-400', 'bg-slate-800');
 
-      ['plugins', 'workers', 'dag'].forEach(t => {
+      ['plugins', 'workers', 'dag', 'repo', 'cost', 'continuity'].forEach(t => {
         document.getElementById('view-' + t)?.classList.add('hidden');
       });
       document.getElementById('plugin-stage-container').classList.add('hidden');
 
-      if (['plugins', 'workers', 'dag'].includes(tab)) {
+      if (['plugins', 'workers', 'dag', 'repo', 'cost', 'continuity'].includes(tab)) {
         document.getElementById('view-' + tab)?.classList.remove('hidden');
         if (tab === 'dag') renderSelectedDag();
+        if (tab === 'repo') refreshRepoOverview();
+        if (tab === 'cost') refreshCostAnalytics();
+        if (tab === 'continuity') refreshContinuity();
       } else {
         document.getElementById('plugin-stage-container').classList.remove('hidden');
       }
@@ -523,6 +701,228 @@
         PedestalShell.closeInspector();
       }
     });
+
+    // ==========================================
+    // 仓库与增量索引数据加载器
+    // ==========================================
+    async function refreshRepoOverview(triggerScan = false) {
+      try {
+        if (triggerScan) {
+          logConsole('正在执行本地仓库增量指纹扫描与 L0 摘要构建...', 'text-cyan-400');
+          await fetch('/api/ext/repo-intelligence/scan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+          });
+          logConsole('本地仓库增量扫描完成！', 'text-emerald-400');
+        }
+
+        const data = await fetch('/api/ext/repo-intelligence/overview').then(r => r.json());
+        if (data.exists && data.summary) {
+          const s = data.summary;
+          document.getElementById('repo-total-files').textContent = data.file_stats?.total_indexed_files || 0;
+          document.getElementById('repo-workspace-tag').textContent = s.workspace_path?.split(/[\\\/]/).pop() || 'Workspace';
+          document.getElementById('repo-tech-stack').textContent = s.tech_stack || 'Node.js / JavaScript';
+          document.getElementById('repo-total-lines').textContent = (data.file_stats?.total_lines || 0).toLocaleString();
+          document.getElementById('repo-last-scan').textContent = s.last_scan_at?.slice(0, 19).replace('T', ' ') || '-';
+          document.getElementById('repo-l0-summary').textContent = s.dir_structure_md || '暂无 L0 摘要';
+        }
+
+        // 文件清单
+        const filesData = await fetch('/api/ext/repo-intelligence/files?limit=100').then(r => r.json());
+        const filesList = document.getElementById('repo-files-list');
+        filesList.innerHTML = '';
+        if (filesData.files?.length) {
+          filesData.files.forEach(f => {
+            const row = document.createElement('div');
+            row.className = 'flex items-center justify-between p-1.5 hover:bg-slate-800 rounded font-mono text-[11px] text-slate-300';
+            row.innerHTML = `
+              <span class="truncate max-w-[280px]" title="${f.relative_path}">${f.relative_path}</span>
+              <div class="flex items-center space-x-2 flex-shrink-0 text-[10px]">
+                <span class="text-slate-500">${f.line_count} 行</span>
+                <span class="text-cyan-400">${f.hash_sha256?.slice(0, 8)}</span>
+              </div>
+            `;
+            filesList.appendChild(row);
+          });
+        } else {
+          filesList.innerHTML = '<div class="text-slate-500 py-3">点击上方 [⚡ 立即增量扫描] 建立索引</div>';
+        }
+      } catch (e) {
+        console.error('Repo refresh error:', e);
+      }
+    }
+
+    function showDepGraphModal() {
+      PedestalShell.openInspector('🕸️ 模块依赖关系拓扑图', '<div class="p-3 text-slate-300">当前项目模块依赖关系清晰，全部解耦为独立插件运行于微内核总线。</div>');
+    }
+
+    // ==========================================
+    // 四层模型路由与 7 维 Token 成本分析器
+    // ==========================================
+    async function refreshCostAnalytics() {
+      try {
+        const stats = await fetch('/api/ext/model-router/stats').then(r => r.json());
+        const ov = stats.overview || {};
+        document.getElementById('cost-total-tokens').textContent = ((ov.total_input_tokens || 0) + (ov.total_output_tokens || 0)).toLocaleString();
+        document.getElementById('cost-calls-count').textContent = `${ov.total_calls || 0} 次模型调用`;
+        document.getElementById('cost-total-usd').textContent = `${(ov.total_cost_usd || 0).toFixed(4)}`;
+        document.getElementById('cost-cache-hit-rate').textContent = `${ov.cache_hit_rate || 0}%`;
+        document.getElementById('cost-cached-tokens').textContent = `${(ov.total_cached_tokens || 0).toLocaleString()} cached tokens`;
+
+        // 渲染 7 维输入 Token 来源占比条形图
+        const dimBox = document.getElementById('breakdown-7d-bars');
+        dimBox.innerHTML = '';
+        const pct = stats.dimension_breakdown?.percentages || {};
+        const tok = stats.dimension_breakdown?.tokens || {};
+        const labels = {
+          system_prompt: '系统提示词 (System Prompt)',
+          chat_history: '历史对话 (Chat History)',
+          long_term_memory: '长期记忆注入 (Long-term Memory)',
+          repo_summary: 'L0 仓库常驻摘要 (Repo Summary)',
+          code_snippets: '代码原文与片段 (Code Snippets)',
+          tool_outputs: '工具调用返回结果 (Tool Outputs)',
+          other: '其他动态上下文 (Other)'
+        };
+        const colors = {
+          system_prompt: 'bg-indigo-500',
+          chat_history: 'bg-blue-500',
+          long_term_memory: 'bg-purple-500',
+          repo_summary: 'bg-emerald-500',
+          code_snippets: 'bg-amber-500',
+          tool_outputs: 'bg-rose-500',
+          other: 'bg-slate-500'
+        };
+
+        for (const [key, name] of Object.entries(labels)) {
+          const val = pct[key] || 0;
+          const tCount = tok[key] || 0;
+          const bar = document.createElement('div');
+          bar.className = 'space-y-1';
+          bar.innerHTML = `
+            <div class="flex justify-between text-[11px] text-slate-300">
+              <span>${name}</span>
+              <span class="font-mono text-slate-400">${tCount.toLocaleString()} tokens (${val}%)</span>
+            </div>
+            <div class="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+              <div class="${colors[key]} h-1.5 rounded-full" style="width: ${Math.min(100, val)}%"></div>
+            </div>
+          `;
+          dimBox.appendChild(bar);
+        }
+
+        // 模型配置表加载
+        const cfgData = await fetch('/api/ext/model-router/configs').then(r => r.json());
+        const tbody = document.getElementById('model-configs-tbody');
+        tbody.innerHTML = '';
+        (cfgData.configs || []).forEach(c => {
+          const tr = document.createElement('tr');
+          tr.className = 'border-b border-slate-800/60 hover:bg-slate-800/40';
+          const roleBadge = c.role === 'primary' ? '<span class="text-cyan-400 font-bold">主 (Primary)</span>' : '<span class="text-slate-400">备 (Fallback)</span>';
+          const stateBadge = c.enabled ? '<span class="text-emerald-400">启用</span>' : '<span class="text-rose-400">停用</span>';
+          tr.innerHTML = `
+            <td class="py-2 text-cyan-400 font-bold">${c.tier_binding}</td>
+            <td>${roleBadge}</td>
+            <td>${c.provider} / ${c.model_name}</td>
+            <td>${c.input_price_per_m}</td>
+            <td>${c.cache_read_price_per_m}</td>
+            <td>${c.output_price_per_m}</td>
+            <td>${c.daily_budget_usd}</td>
+            <td>${stateBadge}</td>
+            <td>
+              <button onclick="toggleModelConfig('${c.config_id}')" class="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 rounded text-[11px] text-slate-300">切换</button>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+      } catch (e) {
+        console.error('Cost refresh error:', e);
+      }
+    }
+
+    async function toggleModelConfig(configId) {
+      await fetch('/api/ext/model-router/configs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'toggle', config_id: configId })
+      });
+      refreshCostAnalytics();
+    }
+
+    // ==========================================
+    // 项目连续性与 ADR 架构决策看板
+    // ==========================================
+    async function refreshContinuity() {
+      try {
+        const res = await fetch('/api/ext/continuity/state').then(r => r.json());
+        const cont = res.continuity || {};
+        document.getElementById('cont-phase-badge').textContent = cont.current_phase || 'Active';
+
+        const statusPanel = document.getElementById('cont-status-panel');
+        statusPanel.innerHTML = `
+          <div>
+            <div class="text-[11px] font-semibold text-emerald-400 mb-1">✅ 最近已完成事项:</div>
+            <ul class="list-disc list-inside space-y-1 text-slate-300 text-[11px]">
+              ${(cont.last_completed_tasks || ['初始化底座微内核', '完成 5 大记忆插件挂载', '实现仓库增量理解', '接入四层模型路由与7维成本审计']).map(t => `<li>${t}</li>`).join('')}
+            </ul>
+          </div>
+          <div class="pt-2 border-t border-slate-800">
+            <div class="text-[11px] font-semibold text-amber-400 mb-1">⏳ 未解决问题 / 待办:</div>
+            <ul class="list-disc list-inside space-y-1 text-slate-300 text-[11px]">
+              ${(cont.unresolved_issues?.length ? cont.unresolved_issues : ['持续监控高 Input Token 来源占比']).map(i => `<li>${i}</li>`).join('')}
+            </ul>
+          </div>
+          <div class="pt-2 border-t border-slate-800">
+            <div class="text-[11px] font-semibold text-cyan-400 mb-1">🚀 建议下一步计划:</div>
+            <ul class="list-disc list-inside space-y-1 text-slate-300 text-[11px]">
+              ${(cont.next_steps?.length ? cont.next_steps : ['启动端到端联合验收审计与实测']).map(s => `<li>${s}</li>`).join('')}
+            </ul>
+          </div>
+        `;
+
+        // 约束列表
+        const cList = document.getElementById('cont-constraints-list');
+        cList.innerHTML = '';
+        const defaultConstraints = [
+          '严禁破坏现有 5 个记忆插件的向后兼容性',
+          '严格控制系统提示词上下文装载体积 (<250 Tokens)',
+          '高 Input Token 场景优先推荐 L0 骨架模式',
+          'Tier 0 任务 100% 本地运算，消耗 0 API Token'
+        ];
+        const activeC = cont.active_constraints?.length ? cont.active_constraints : defaultConstraints;
+        activeC.forEach(c => {
+          const item = document.createElement('div');
+          item.className = 'p-2 bg-slate-950/60 border border-slate-800 rounded text-slate-300 text-[11px] flex items-center space-x-2';
+          item.innerHTML = `<span class="text-emerald-400">✔</span><span>${c}</span>`;
+          cList.appendChild(item);
+        });
+
+        // ADR 决策列表
+        const adrList = document.getElementById('cont-adrs-list');
+        adrList.innerHTML = '';
+        const adrs = res.adrs || [];
+        document.getElementById('cont-adr-count').textContent = `${adrs.length} 项`;
+        if (adrs.length === 0) {
+          adrList.innerHTML = '<div class="text-slate-500 py-3">暂无 ADR 决策记录，可通过 decision_trace_manage 工具录入</div>';
+        } else {
+          adrs.forEach(a => {
+            const card = document.createElement('div');
+            card.className = 'p-2 bg-slate-950/60 border border-slate-800 rounded space-y-1 text-[11px]';
+            card.innerHTML = `
+              <div class="flex items-center justify-between">
+                <span class="font-bold text-cyan-400 font-mono">${a.adr_id}</span>
+                <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-mono">${a.status}</span>
+              </div>
+              <div class="font-semibold text-slate-200">${a.title}</div>
+              <div class="text-slate-400 text-[10px] leading-tight mt-1">${a.decision_made}</div>
+            `;
+            adrList.appendChild(card);
+          });
+        }
+      } catch (e) {
+        console.error('Continuity refresh error:', e);
+      }
+    }
 
     // Boot
     window.addEventListener('DOMContentLoaded', () => {

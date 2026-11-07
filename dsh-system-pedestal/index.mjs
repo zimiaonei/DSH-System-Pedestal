@@ -14,20 +14,27 @@ const MODULES = [
   { file: 'hotplug-loader.mjs', name: 'hotplugLoader', bind: async (inst, p) => { p.hotplugLoader = inst?.hotplugLoader || inst; p.kernel?.bindHotplugLoader?.(p.hotplugLoader); p.hotplugLoader?.init?.(p.kernel, p.pluginsDir); await p.hotplugLoader?.loadAll?.(); } }
 ];
 
-export function getNodeExecutable() {
+export function getNodeExecutableInfo() {
   const possiblePaths = [
     path.join(os.homedir(), '.dsh', 'dsh-runtimes', 'dsh-next-primary-runtime', 'dependencies', 'node', 'bin', 'node.exe'),
     path.join(os.homedir(), '.dsh', 'dsh-runtimes', 'dsh-primary-runtime', 'dependencies', 'node', 'bin', 'node.exe')
   ];
   for (const p of possiblePaths) {
     if (fs.existsSync(p)) {
-      return p;
+      return { bin: p, env: {} };
     }
   }
   if (process.execPath && !process.execPath.toLowerCase().includes('electron')) {
-    return process.execPath;
+    return { bin: process.execPath, env: {} };
   }
-  return 'node';
+  if (process.execPath) {
+    return { bin: process.execPath, env: { ELECTRON_RUN_AS_NODE: '1' } };
+  }
+  return { bin: 'node', env: {} };
+}
+
+export function getNodeExecutable() {
+  return getNodeExecutableInfo().bin;
 }
 
 export async function isPortOpen(port = 18765, host = '127.0.0.1', timeoutMs = 800) {
@@ -42,39 +49,151 @@ export async function isPortOpen(port = 18765, host = '127.0.0.1', timeoutMs = 8
   });
 }
 
-let isSpawning = false;
+let spawnLockPromise = null;
 let watchdogTimer = null;
 
-export async function ensureDaemon(baseDir) {
-  if (isSpawning) return;
-  const open = await isPortOpen(18765);
-  if (!open) {
-    isSpawning = true;
-    const daemonScript = path.join(baseDir, 'daemon.mjs');
-    const nodeBin = getNodeExecutable();
-    console.log('[Pedestal Watchdog] GUI Gateway 18765 is down! Spawning detached daemon with:', nodeBin);
+export function isDaemonContext(ctx) {
+  if (process.env.DSH_PEDESTAL_DAEMON === '1') return true;
+  if (typeof ctx === 'object' && ctx !== null && !ctx.fiber && Reflect.has(ctx, 'isDaemon')) {
     try {
-      const child = spawn(nodeBin, [daemonScript], {
-        detached: true,
-        stdio: 'ignore',
-        cwd: baseDir,
-        env: process.env
-      });
-      child.unref();
-      console.log('[Pedestal Watchdog] Detached daemon process spawned successfully with PID:', child.pid);
-    } catch (err) {
-      console.error('[Pedestal Watchdog] Failed to spawn daemon process:', err);
-    } finally {
-      setTimeout(() => { isSpawning = false; }, 3000);
+      return Boolean(ctx.isDaemon);
+    } catch {
+      return false;
     }
   }
+  return false;
+}
+
+export function normalizeParametersForDsh(rawParams) {
+  if (!rawParams || typeof rawParams !== 'object') {
+    return {
+      type: 'object',
+      properties: {},
+      required: []
+    };
+  }
+
+  let sanitized = rawParams;
+  if (typeof rawParams.toJSON === 'function') {
+    try {
+      sanitized = rawParams.toJSON();
+    } catch {}
+  } else if (rawParams.dict && typeof rawParams.dict === 'object') {
+    try {
+      sanitized = rawParams.dict;
+    } catch {}
+  }
+
+  try {
+    const seen = new WeakSet();
+    const clean = JSON.parse(JSON.stringify(sanitized, (key, value) => {
+      if (typeof value === 'object' && value !== null) {
+        if (seen.has(value)) return undefined;
+        seen.add(value);
+      }
+      if (typeof value === 'bigint') return Number(value);
+      if (typeof value === 'function' || typeof value === 'symbol' || value === undefined) {
+        return undefined;
+      }
+      return value;
+    }));
+
+    if (!clean || typeof clean !== 'object' || Array.isArray(clean)) {
+      return {
+        type: 'object',
+        properties: {},
+        required: []
+      };
+    }
+
+    if (clean.type !== 'object') {
+      clean.type = 'object';
+    }
+    if (!clean.properties || typeof clean.properties !== 'object' || Array.isArray(clean.properties)) {
+      clean.properties = {};
+    }
+    if (!Array.isArray(clean.required)) {
+      clean.required = [];
+    }
+    return clean;
+  } catch {
+    return {
+      type: 'object',
+      properties: {},
+      required: []
+    };
+  }
+}
+
+export function normalizeToolForDsh(toolDef) {
+  if (!toolDef || typeof toolDef !== 'object') return toolDef;
+  const tool = { ...toolDef };
+  if (!tool.execute && typeof tool.handler === 'function') {
+    tool.execute = async (args, exec) => await tool.handler(args, exec);
+  }
+  if (!tool.handler && typeof tool.execute === 'function') {
+    tool.handler = async (args, exec) => await tool.execute(args, exec);
+  }
+  tool.parameters = normalizeParametersForDsh(tool.parameters);
+  if (!tool.output || typeof tool.output !== 'object') {
+    tool.output = {
+      schema: { type: 'object', additionalProperties: true },
+      render: (args, value) => [
+        { type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value ?? null, (_, v) => typeof v === 'bigint' ? Number(v) : v, 2) }
+      ]
+    };
+  } else {
+    const output = { ...tool.output };
+    if (!output.schema) {
+      output.schema = { type: 'object', additionalProperties: true };
+    }
+    if (typeof output.render !== 'function') {
+      output.render = (args, value) => [
+        { type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value ?? null, (_, v) => typeof v === 'bigint' ? Number(v) : v, 2) }
+      ];
+    }
+    tool.output = output;
+  }
+  return tool;
+}
+
+export async function ensureDaemon(baseDir) {
+  if (spawnLockPromise) return spawnLockPromise;
+  spawnLockPromise = (async () => {
+    try {
+      // 1. 如果当前进程自己的 guiGateway 已经成功在运行/监听，绝不要 spawn 第二个 daemon 抢端口争 SQLite 锁！
+      if (globalThis.__DSH_PEDESTAL__?.guiGateway?.server || globalThis.__DSH_PEDESTAL__?.guiGateway?.status === 'running') {
+        return;
+      }
+      // 2. 检查 18765 端口是否已经有实例响应
+      const open = await isPortOpen(18765);
+      if (!open) {
+        const daemonScript = path.join(baseDir, 'daemon.mjs');
+        const { bin: nodeBin, env: extraEnv } = getNodeExecutableInfo();
+        console.log('[Pedestal Watchdog] GUI Gateway 18765 is down! Spawning detached daemon with:', nodeBin);
+        try {
+          const child = spawn(nodeBin, [daemonScript], {
+            detached: true,
+            stdio: 'ignore',
+            cwd: baseDir,
+            env: { ...process.env, ...extraEnv, DSH_PEDESTAL_DAEMON: '1' }
+          });
+          child.unref();
+          console.log('[Pedestal Watchdog] Detached daemon process spawned successfully with PID:', child.pid);
+        } catch (err) {
+          console.error('[Pedestal Watchdog] Failed to spawn daemon process:', err);
+        }
+      }
+    } finally {
+      setTimeout(() => { spawnLockPromise = null; }, 3000);
+    }
+  })();
+  return spawnLockPromise;
 }
 
 export function startWatchdog(baseDir) {
   if (watchdogTimer) return;
   console.log('[Pedestal] Starting 5s background watchdog for 127.0.0.1:18765...');
-  // Initial check immediately
-  ensureDaemon(baseDir).catch(() => {});
   watchdogTimer = setInterval(() => {
     ensureDaemon(baseDir).catch((err) => {
       console.error('[Pedestal Watchdog] Check error:', err);
@@ -93,13 +212,144 @@ export function stopWatchdog() {
   }
 }
 
+/**
+ * Creates a safe facade over the host context (which may be a strict Cordis Context Proxy,
+ * a plain test/daemon options object, or undefined).
+ * Cordis Context intercepts property access and throws "cannot get property X without inject"
+ * if X is accessed directly. This facade prevents any such exceptions.
+ */
+export function createSafeDshContext(raw = {}) {
+  if (!raw) raw = {};
+  const isCordis = typeof raw.get === 'function' || Boolean(raw.reflect) || Boolean(raw.fiber);
+  const isDaemon = isDaemonContext(raw);
+
+  const getTools = () => {
+    if (isCordis) {
+      try {
+        return raw.get?.('tools') || null;
+      } catch {
+        return null;
+      }
+    }
+    return raw.tools || null;
+  };
+
+  const _localToolsMap = new Map();
+  const safeTools = {
+    _tools: _localToolsMap,
+    register(rawToolDef) {
+      try {
+        const toolDef = normalizeToolForDsh(rawToolDef);
+        if (toolDef?.name) {
+          _localToolsMap.set(toolDef.name, toolDef);
+        }
+        if (isCordis) {
+          const t = raw.get?.('tools');
+          try {
+            const existing = t?.get?.(toolDef.name);
+            if (existing && typeof existing === 'object') {
+              existing.handler = toolDef.handler;
+              existing.execute = toolDef.execute;
+              existing.description = toolDef.description;
+              existing.parameters = toolDef.parameters;
+              return;
+            }
+          } catch {}
+          if (t?.register) return t.register(toolDef);
+          return;
+        }
+        if (raw.tools?.register) return raw.tools.register(toolDef);
+        if (raw.registerTool) return raw.registerTool(toolDef);
+        if (raw.registry?.register) return raw.registry.register(toolDef);
+      } catch (err) {
+        console.warn('[Pedestal] safeTools.register failed:', err.message);
+      }
+    },
+    unregister(toolName) {
+      try {
+        _localToolsMap.delete(toolName);
+        if (isCordis) {
+          const t = raw.get?.('tools');
+          if (t?.unregister) return t.unregister(toolName);
+          return;
+        }
+        if (raw.tools?.unregister) return raw.tools.unregister(toolName);
+        if (raw.unregisterTool) return raw.unregisterTool(toolName);
+      } catch (err) {
+        console.warn('[Pedestal] safeTools.unregister failed:', err.message);
+      }
+    },
+    get(toolName) {
+      if (_localToolsMap.has(toolName)) {
+        return _localToolsMap.get(toolName);
+      }
+      try {
+        const t = getTools();
+        if (t?.get) {
+          const found = t.get(toolName);
+          if (found) return found;
+        }
+      } catch {}
+      return null;
+    }
+  };
+
+  return new Proxy(raw, {
+    get(target, prop, receiver) {
+      if (prop === 'isDaemon') {
+        return isDaemon;
+      }
+      if (prop === 'tools') {
+        return safeTools;
+      }
+      if (prop === 'sessionId') {
+        return process.env.DSH_SESSION_ID || process.env.SESSION_ID || null;
+      }
+      if (prop === 'sessionTitle') {
+        return process.env.DSH_SESSION_TITLE || null;
+      }
+      if (prop === 'registerTool') {
+        return (t) => safeTools.register(t);
+      }
+      if (prop === 'unregisterTool') {
+        return (name) => safeTools.unregister(name);
+      }
+      if (prop === 'raw') {
+        return target;
+      }
+      if (isCordis) {
+        try {
+          if (typeof target.get === 'function') {
+            return target.get(prop);
+          }
+        } catch {
+          return undefined;
+        }
+        return undefined;
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+    has(target, prop) {
+      if (prop === 'isDaemon' || prop === 'tools' || prop === 'sessionId' || prop === 'sessionTitle' || prop === 'raw' || prop === 'registerTool' || prop === 'unregisterTool') {
+        return true;
+      }
+      if (isCordis) {
+        try {
+          return target.get?.(prop) !== undefined;
+        } catch {
+          return false;
+        }
+      }
+      return Reflect.has(target, prop);
+    }
+  });
+}
+
 export async function bootstrapPedestal(dshContext = {}) {
   const baseDir = path.dirname(fileURLToPath(import.meta.url));
+  const safeContext = createSafeDshContext(dshContext);
 
-  // If not running inside the daemon itself, check and ensure the persistent daemon is alive
-  if (!dshContext.isDaemon) {
-    await ensureDaemon(baseDir);
-  }
+  // In-process initialization: bootstrapPedestal hosts the kernel & guiGateway in this process.
 
   if (globalThis.__DSH_PEDESTAL__?.shutdown) {
     console.log('[Pedestal] Gracefully shutting down existing pedestal instance...');
@@ -111,7 +361,7 @@ export async function bootstrapPedestal(dshContext = {}) {
 
   const instance = {
     version: '4.0.0',
-    dshContext,
+    dshContext: safeContext,
     baseDir,
     pedestalDir,
     pluginsDir,
@@ -153,6 +403,27 @@ export async function bootstrapPedestal(dshContext = {}) {
   const statusTool = {
     name: 'pedestal_status',
     description: 'Get status of dsh-system-pedestal microkernel subsystems and plugins',
+    parameters: {
+      type: 'object',
+      properties: {},
+      required: []
+    },
+    output: {
+      schema: {
+        type: 'object',
+        properties: {
+          version: { type: 'string' },
+          subsystems: { type: 'object' },
+          guiUrl: { type: 'string' },
+          loadedPlugins: { type: 'array' },
+          details: { type: 'object' }
+        },
+        additionalProperties: true
+      },
+      render: (args, value) => [
+        { type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value ?? null, (_, v) => typeof v === 'bigint' ? Number(v) : v, 2) }
+      ]
+    },
     handler: async () => {
       await ensureDaemon(baseDir);
       return {
@@ -171,13 +442,7 @@ export async function bootstrapPedestal(dshContext = {}) {
     }
   };
 
-  if (dshContext.tools?.register) {
-    dshContext.tools.register(statusTool);
-  } else if (dshContext.registerTool) {
-    dshContext.registerTool(statusTool);
-  } else if (dshContext.registry?.register) {
-    dshContext.registry.register(statusTool);
-  }
+  safeContext.tools.register(statusTool);
   instance.statusTool = statusTool;
 
   const testTool = {
@@ -196,7 +461,25 @@ export async function bootstrapPedestal(dshContext = {}) {
           type: 'string',
           description: '可选过滤关键字'
         }
-      }
+      },
+      required: []
+    },
+    output: {
+      schema: {
+        type: 'object',
+        properties: {
+          total: { type: 'number' },
+          passed: { type: 'number' },
+          failed: { type: 'number' },
+          durationMs: { type: 'number' },
+          summary: { type: 'string' },
+          results: { type: 'array' }
+        },
+        additionalProperties: true
+      },
+      render: (args, value) => [
+        { type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value ?? null, (_, v) => typeof v === 'bigint' ? Number(v) : v, 2) }
+      ]
     },
     handler: async (args = {}) => {
       const suite = args.suite || 'all';
@@ -218,13 +501,7 @@ export async function bootstrapPedestal(dshContext = {}) {
     }
   };
 
-  if (dshContext.tools?.register) {
-    dshContext.tools.register(testTool);
-  } else if (dshContext.registerTool) {
-    dshContext.registerTool(testTool);
-  } else if (dshContext.registry?.register) {
-    dshContext.registry.register(testTool);
-  }
+  safeContext.tools.register(testTool);
   instance.testTool = testTool;
 
   console.log('[Pedestal] Pedestal bootstrap sequence completed.');
@@ -234,12 +511,15 @@ export async function bootstrapPedestal(dshContext = {}) {
 export function apply(ctx, config) {
   console.log('[Pedestal] Cordis plugin apply hook invoked.');
   const baseDir = path.dirname(fileURLToPath(import.meta.url));
-  // Mount 5-second background watchdog
-  startWatchdog(baseDir);
 
-  bootstrapPedestal(ctx).catch((err) => {
-    console.error('[Pedestal] Failed during bootstrapPedestal in apply hook:', err);
-  });
+  bootstrapPedestal(ctx)
+    .then(() => {
+      startWatchdog(baseDir);
+    })
+    .catch((err) => {
+      console.error('[Pedestal] Failed during bootstrapPedestal in apply hook:', err);
+      startWatchdog(baseDir);
+    });
   if (ctx && typeof ctx.on === 'function') {
     ctx.on('dispose', async () => {
       console.log('[Pedestal] Cordis plugin dispose hook invoked.');
@@ -261,9 +541,11 @@ export default {
   apply,
   activate,
   bootstrapPedestal,
+  createSafeDshContext,
   ensureDaemon,
   startWatchdog,
   stopWatchdog,
   isPortOpen,
-  getNodeExecutable
+  getNodeExecutable,
+  getNodeExecutableInfo
 };

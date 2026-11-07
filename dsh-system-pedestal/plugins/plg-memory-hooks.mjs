@@ -38,11 +38,17 @@ export async function activate(ctx) {
   // =========================================================================
   // 1. 上下文协议注入与工作区自动锚定 (addSystemPromptHook)
   // =========================================================================
+    // =========================================================================
+  // 1. 上下文协议注入与工作区自动锚定 (addSystemPromptHook)
+  // 【优化3：前缀静态锁定】顶部永远是 100% 静态协议，确保大模型 Prefix Cache 稳定命中！
+  // 【优化1：Tier 0 零轮次智能预检】在动态尾部直接附带 Top-3 摘要 + Lv.5 Pinned 常驻节点！
+  // =========================================================================
   const getDynamicPrompt = () => {
-    let workspacePrompt = '';
+    let dynamicTail = '';
     const currentCwd = process.cwd();
 
     try {
+      // 1. 工作区锚点
       const dirs = ctx.db.query("SELECT * FROM memory_directories WHERE workspace_path IS NOT NULL AND workspace_path != ''");
       const normCwd = currentCwd.replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '');
 
@@ -55,23 +61,31 @@ export async function activate(ctx) {
         }
       }
 
+      let workspaceInfo = '';
       if (matchedDir) {
-        // 查询该目录下的活跃节点概览
-        const nodes = ctx.db.query(
-          "SELECT id, title, node_type, drawer_level FROM knowledge_nodes WHERE dir_path = ? AND status = 'active' ORDER BY drawer_level DESC LIMIT 5",
-          [matchedDir.path]
-        );
-        const nodeSummary = nodes.length > 0
-          ? nodes.map(n => `[#${n.id}] ${n.title} (Lv.${n.drawer_level})`).join(', ')
-          : '暂无活跃节点';
+        workspaceInfo = `\n[工作区锚点] 目录: ${matchedDir.path} (${matchedDir.name}) · 用途: ${matchedDir.dir_summary || '未填写'}`;
+      }
 
-        workspacePrompt = `\n\n【当前工作区自动锚定】\n- 本地路径: ${currentCwd}\n- 虚拟目录: ${matchedDir.path} (${matchedDir.name})\n- 目录用途: ${matchedDir.dir_summary || '未填写'}\n- 活跃知识节点: ${nodeSummary}`;
+      // 2. Tier 0 零轮次常驻高频节点 (Lv.5 Pinned，控制在 150 Tokens 内)
+      let pinnedInfo = '';
+      try {
+        const pinnedNodes = ctx.db.query(
+          "SELECT id, title, tldr FROM knowledge_nodes WHERE drawer_level = 5 AND status = 'active' ORDER BY access_count DESC LIMIT 3"
+        );
+        if (pinnedNodes.length > 0) {
+          pinnedInfo = '\n[Tier 0 核心常驻记忆 (Lv.5)]\n' + pinnedNodes.map(n => `- [#${n.id}] ${n.title}: ${n.tldr}`).join('\n');
+        }
+      } catch (e) {}
+
+      if (workspaceInfo || pinnedInfo) {
+        dynamicTail = `\n\n---【动态上下文尾部 · 请勿提升至前缀以免破坏系统缓存】---${workspaceInfo}${pinnedInfo}`;
       }
     } catch (err) {
-      console.warn('[plg-memory-hooks] Workspace anchoring scan error:', err.message);
+      console.warn('[plg-memory-hooks] Prompt dynamic tail error:', err.message);
     }
 
-    return CORE_ADDRESSING_PROTOCOL + workspacePrompt;
+    // 静态协议置顶，动态数据置尾
+    return CORE_ADDRESSING_PROTOCOL + dynamicTail;
   };
 
   // 注入 Prompt Hook
@@ -105,7 +119,7 @@ export async function activate(ctx) {
   // 3.1 memory_log_short_term
   ctx.tools.register({
     name: 'memory_log_short_term',
-    description: '快速将当次会话的临时发现、Debug排查痕迹或临时备忘存入 Drawer 0 短期记忆区（/Inbox 目录），待后续总结提炼',
+    description: '存入临时碎片/Debug记录到Drawer 0(/Inbox)',
     parameters: {
       type: 'object',
       properties: {
@@ -182,7 +196,7 @@ export async function activate(ctx) {
   // 3.2 memory_consolidate_inbox
   ctx.tools.register({
     name: 'memory_consolidate_inbox',
-    description: '查看 /Inbox 下未处理的短期记忆碎片，或批量清理已完成提炼归档的临时条目',
+    description: '查看或清理/Inbox待提炼碎片',
     parameters: {
       type: 'object',
       properties: {

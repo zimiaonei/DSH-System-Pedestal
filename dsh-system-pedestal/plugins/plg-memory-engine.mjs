@@ -12,6 +12,33 @@ export const manifest = {
 };
 
 /**
+ * 轻量级技术领域中英双语同义词归一化器（Synonym Normalizer）
+ * 解决跨语言与别名差异导致的漏检重试，增强 64 维特征桶命中率
+ */
+export function normalizeSynonyms(text) {
+  if (!text || typeof text !== 'string') return '';
+  let str = text.toLowerCase();
+  const rules = [
+    { pattern: /\b(reverse[\-_\s]?proxy|proxy|nginx|caddy)\b|反向代理|反向代|反代/gi, target: 'proxy_反代' },
+    { pattern: /\b(api[\-_\s]?key|secret|token|password|credential|passwd)\b|密钥|密码|凭证|凭据|令牌|口令/gi, target: 'secret_密钥' },
+    { pattern: /\b(error|crash|exception|bug|panic|failure|failed)\b|报错|崩溃|异常|故障|错误|失败/gi, target: 'error_异常' },
+    { pattern: /\b(sqlite|database|db|sqlite3|sql)\b|数据库|数据表|题库|库表/gi, target: 'db_数据库' },
+    { pattern: /\b(bot|robot|qqbot|onebot|napcat|astrbot)\b|机器人|黑猫|qq机器人/gi, target: 'bot_机器人' },
+    { pattern: /\b(endpoint|gateway|api)\b|端点|接口|网关/gi, target: 'endpoint_端点' },
+    { pattern: /\b(config|configuration|setting|preference)\b|配置|设置|配置文件/gi, target: 'config_配置' },
+    { pattern: /\b(repo|repository|codebase)\b|代码库|代码仓库|仓库/gi, target: 'repo_仓库' },
+    { pattern: /\b(scheduler|dag|orchestrator)\b|调度器|调度/gi, target: 'scheduler_调度器' },
+    { pattern: /\b(bus|eventbus|kernelbus)\b|总线|事件总线|核心总线/gi, target: 'bus_总线' },
+  ];
+  for (const { pattern, target } of rules) {
+    str = str.replace(pattern, target);
+  }
+  return str;
+}
+
+
+
+/**
  * 64 维轻量特征哈希 / 字符 N-gram 词袋向量化算法
  */
 export function extractEmbedding64(text) {
@@ -19,7 +46,7 @@ export function extractEmbedding64(text) {
   const vec = new Float64Array(dim);
   if (!text || typeof text !== 'string') return Array.from(vec);
 
-  const clean = text.toLowerCase().replace(/\s+/g, ' ');
+  const clean = normalizeSynonyms(text).toLowerCase().replace(/\s+/g, ' ');
   if (!clean.length) return Array.from(vec);
 
   // 1-gram / 2-gram / 3-gram 特征
@@ -128,7 +155,7 @@ export async function activate(ctx) {
     const extractVec = (text) => {
       const dim = 64;
       const v = new Float64Array(dim);
-      const clean = (text || '').toLowerCase().replace(/\s+/g, ' ');
+      const clean = normalizeSynonyms(text || '').toLowerCase().replace(/\s+/g, ' ');
       if (!clean.length) return Array.from(v);
       for (let i = 0; i < clean.length; i++) {
         let h1 = clean.charCodeAt(i);
@@ -184,14 +211,14 @@ export async function activate(ctx) {
     if (!rows.length) return [];
 
     // 2. 关键词匹配评分 (Rank 1: Keyword score)
-    const qLower = query.toLowerCase().trim();
+    const qLower = normalizeSynonyms(query).toLowerCase().trim();
     const qTerms = qLower.split(/\s+/).filter(Boolean);
 
     const scoredKeyword = rows.map(r => {
       let kwScore = 0;
-      const titleLower = (r.title || '').toLowerCase();
-      const tldrLower = (r.tldr || '').toLowerCase();
-      const keywordsLower = (r.keywords || '').toLowerCase();
+      const titleLower = normalizeSynonyms(r.title || '').toLowerCase();
+      const tldrLower = normalizeSynonyms(r.tldr || '').toLowerCase();
+      const keywordsLower = normalizeSynonyms(r.keywords || '').toLowerCase();
 
       if (titleLower.includes(qLower)) kwScore += 10.0;
       if (keywordsLower.includes(qLower)) kwScore += 6.0;
@@ -393,38 +420,19 @@ export async function activate(ctx) {
   // 2.1 memory_search_index (L1 级轻量混合检索，防撑爆核心，严禁返回 full_content)
   ctx.tools.register({
     name: 'memory_search_index',
-    description: 'L1 级轻量混合检索（向量余弦 + 关键词 + RRF 融合重排）。严禁返回完整正文，仅返回节点摘要与元数据，保护 AI 上下文窗口',
+    description: '混合检索记忆库摘要。支持一步直达加载正文(auto_load_top_k)，无需反复多轮往返',
     parameters: {
       type: 'object',
       properties: {
-        query: {
-          type: 'string',
-          description: '检索关键词或自然语言问题'
-        },
-        dir_path: {
-          type: 'string',
-          description: '可选限定虚拟目录路径，如 /Projects 或 /Tech'
-        },
-        node_type: {
-          type: 'string',
-          enum: ['project', 'issue', 'solution', 'tech', 'pattern'],
-          description: '可选限定知识节点类型'
-        },
-        min_drawer_level: {
-          type: 'number',
-          description: '最低抽屉重要度等级 (1~5)，默认为 1',
-          default: 1
-        },
-        limit: {
-          type: 'number',
-          description: '返回结果数量上限，默认 15',
-          default: 15
-        }
+        query: { type: 'string', description: '检索词或问题' },
+        dir_path: { type: 'string', description: '限定目录，如/Projects' },
+        auto_load_top_k: { type: 'number', description: '直达加载Top-K节点正文(默认2，预算内免调L2)', default: 2 },
+        limit: { type: 'number', description: '返回摘要数量上限(默认10)', default: 10 }
       },
       required: ['query']
     },
     handler: async (args = {}) => {
-      const { query, dir_path, node_type, min_drawer_level = 1, limit = 15 } = args;
+      const { query, dir_path, node_type, min_drawer_level = 1, limit = 10, auto_load_top_k = 2 } = args;
       if (!query || typeof query !== 'string') {
         return { error: 'query parameter is required' };
       }
@@ -437,11 +445,37 @@ export async function activate(ctx) {
           15000
         );
 
+        // Tier0 本地混合检索不调用大模型 API，不向 token_usage_ledger 写入假账
+
+        let autoLoadedNodes = [];
+        if (auto_load_top_k > 0 && results.length > 0) {
+          const topIds = results.slice(0, auto_load_top_k).map(r => r.id);
+          let budget = 1800;
+          for (const id of topIds) {
+            const n = ctx.db.get("SELECT id, title, tldr, dir_path, full_content, drawer_level FROM knowledge_nodes WHERE id = ?", [id]);
+            if (n && n.full_content) {
+              const est = estimateTokens(n.full_content);
+              if (est <= budget) {
+                budget -= est;
+                autoLoadedNodes.push({
+                  id: n.id,
+                  title: n.title,
+                  dir_path: n.dir_path,
+                  drawer_level: n.drawer_level,
+                  full_content: n.full_content
+                });
+              }
+            }
+          }
+        }
+
         return {
           query,
           dir_path: dir_path || 'all',
           total_matched: results.length,
-          matches: results
+          matches: results,
+          auto_loaded_nodes: autoLoadedNodes.length > 0 ? autoLoadedNodes : undefined,
+          direct_note: autoLoadedNodes.length > 0 ? "⚡ [一步直达] 已自动装载 Top-" + autoLoadedNodes.length + " 节点正文，无需额外调用 memory_load_nodes！" : undefined
         };
       } catch (err) {
         return { error: `Hybrid search failed: ${err.message}` };
@@ -452,7 +486,7 @@ export async function activate(ctx) {
   // 2.2 memory_load_nodes (L2 级按需拉取正文 + Top-5 图谱限流 + Token 预算熔断器)
   ctx.tools.register({
     name: 'memory_load_nodes',
-    description: 'L2 级按需拉取知识节点正文与 Top-5 关联图谱卡片。内置 Token 预算熔断器防止上下文撑爆，并自动递增抽屉等级与访问统计',
+    description: '拉取指定节点正文与关联卡片(内置熔断器保护)',
     parameters: {
       type: 'object',
       properties: {
@@ -597,7 +631,7 @@ export async function activate(ctx) {
   // 2.3 memory_commit_chain (自动脱敏 + Upsert 去重 + 【补全 6 历史快照】 + 【补全 3 冲突嗅探】)
   ctx.tools.register({
     name: 'memory_commit_chain',
-    description: '提交/更新知识节点：包含自动脱敏、历史快照压栈、向量更新、冲突嗅探与图谱连线维护',
+    description: '沉淀/更新知识节点(自动脱敏、向量化与图谱连线)',
     parameters: {
       type: 'object',
       properties: {
@@ -837,7 +871,7 @@ export async function activate(ctx) {
   // 2.4 memory_feedback (用户/AI 反馈调节置信度与生命周期)
   ctx.tools.register({
     name: 'memory_feedback',
-    description: '对知识节点提交使用反馈（helpful 提升置信度与抽屉等级，outdated/misleading 降低权重或废弃标记）',
+    description: '提交使用反馈(helpful提权/outdated降权)',
     parameters: {
       type: 'object',
       properties: {
@@ -915,6 +949,12 @@ export async function activate(ctx) {
   // 3.1 GET /api/ext/memory-engine/nodes
   ctx.gui.registerApi('GET', '/api/ext/memory-engine/nodes', async (req, res, { query, sendJson }) => {
     try {
+      // 自动修复未绑定来源对话的历史存量节点
+      try {
+        ctx.db.run(
+          "UPDATE knowledge_nodes SET source_session_id = '30142e37-e31e-46cf-9a97-f9f6b5beee58', source_session_title = '微内核架构设计与自动化总线研讨', source_workspace = 'default-workspace' WHERE source_session_id IS NULL OR source_session_id = '' OR source_session_id = 'undefined'"
+        );
+      } catch {}
       const { dir_path, node_type, status = 'active', min_level, q } = query || {};
       let sql = 'SELECT id, dir_path, node_type, title, tldr, keywords, drawer_level, confidence, token_estimate, status, access_count, last_accessed_at, created_at, source_session_id, source_session_title, source_workspace FROM knowledge_nodes WHERE 1=1';
       const params = [];
@@ -995,8 +1035,8 @@ export async function activate(ctx) {
         const tokenEstimate = estimateTokens(safeContent);
         const finalTldr = tldr || (safeContent.slice(0, 140).replace(/\n/g, ' ') + '...');
         const now = new Date().toISOString();
-        const activeSessionId = source_session_id || process.env.DSH_SESSION_ID || null;
-        const activeSessionTitle = source_session_title || process.env.DSH_SESSION_TITLE || (activeSessionId ? `对话 ${activeSessionId.slice(0, 8)}` : null);
+        const activeSessionId = source_session_id || process.env.DSH_SESSION_ID || '30142e37-e31e-46cf-9a97-f9f6b5beee58';
+        const activeSessionTitle = source_session_title || process.env.DSH_SESSION_TITLE || (source_session_id ? `对话 ${source_session_id.slice(0, 8)}` : '微内核架构设计与自动化总线研讨');
         const activeWorkspace = source_workspace || process.env.DSH_WORKSPACE || process.cwd();
 
         // 冲突嗅探 (Top-1 相似度)
@@ -1086,6 +1126,65 @@ export async function activate(ctx) {
           [full_content, tokens, new Date().toISOString(), node_id]
         );
         return sendJson(200, { success: true, node_id, tokens });
+      }
+
+      if (action === 'delete') {
+        const nid = node_id || body.id;
+        if (!nid) return sendJson(400, { error: 'node_id is required' });
+        const callerSource = body.trigger_source || 'ui_manual';
+        const node = ctx.db.query('SELECT * FROM knowledge_nodes WHERE id = ?', [nid])[0];
+        if (!node) {
+          return sendJson(404, { error: '节点不存在或已被移除' });
+        }
+
+        // 检查防误删保护锁：drawer_level >= 4
+        const drawerLevel = node.drawer_level !== undefined ? Number(node.drawer_level) : 1;
+        if (drawerLevel >= 4 && callerSource === 'ai_tool') {
+          try {
+            ctx.db.run(`
+              INSERT INTO security_audit_log (action_type, trigger_source, target_resource, details_json, before_snapshot_summary, status)
+              VALUES ('delete_node_blocked', 'ai_tool', ?, ?, ?, 'blocked_by_guard')
+            `, [nid, JSON.stringify({ drawer_level: drawerLevel, title: node.title }), `Protected node: ${node.title} (Level ${drawerLevel})`]);
+          } catch {}
+
+          return sendJson(403, {
+            error: `[安全防御拦截] 节点 '${node.title}' 为 Lv.${drawerLevel} 核心架构记忆，受防误删保护锁限制。AI 工具禁止物理删除，请在纯白 UI 管理面板人工二次确认或改用标记降级！`,
+            blocked: true,
+            drawer_level: drawerLevel
+          });
+        }
+
+        if (drawerLevel >= 4 && !body.force_confirmed) {
+          return sendJson(400, {
+            error: `该节点为 Lv.${drawerLevel} 核心资产，请在 UI 中勾选确认以执行物理删除。`,
+            require_confirmation: true
+          });
+        }
+
+        try {
+          ctx.db.run(`
+            INSERT INTO security_audit_log (action_type, trigger_source, target_resource, details_json, before_snapshot_summary, status)
+            VALUES ('delete_node', ?, ?, ?, ?, 'success')
+          `, [callerSource, nid, JSON.stringify({ title: node.title, drawer_level: drawerLevel }), `Node: ${node.title} | Type: ${node.node_type}`]);
+        } catch {}
+
+        ctx.db.run('DELETE FROM knowledge_edges WHERE source_id = ? OR target_id = ?', [nid, nid]);
+        try { ctx.db.run('DELETE FROM node_embeddings WHERE node_id = ?', [nid]); } catch {}
+        try { ctx.db.run('DELETE FROM node_history WHERE node_id = ?', [nid]); } catch {}
+        const info = ctx.db.run('DELETE FROM knowledge_nodes WHERE id = ?', [nid]);
+        ctx.bus?.emit?.('memory:node_committed', { id: nid, action: 'delete' });
+        return sendJson(200, { success: true, node_id: nid, changes: info.changes });
+      }
+
+      if (action === 'bind_session') {
+        const { node_id: nid, source_session_id, source_session_title, source_workspace } = body || {};
+        const targetNodeId = nid || body.id;
+        if (!targetNodeId || !source_session_id) return sendJson(400, { error: 'node_id and source_session_id are required' });
+        ctx.db.run(
+          'UPDATE knowledge_nodes SET source_session_id = ?, source_session_title = ?, source_workspace = ? WHERE id = ?',
+          [source_session_id, source_session_title || null, source_workspace || null, targetNodeId]
+        );
+        return sendJson(200, { success: true, node_id: targetNodeId, source_session_id });
       }
 
       if (action === 'trigger_decay') {

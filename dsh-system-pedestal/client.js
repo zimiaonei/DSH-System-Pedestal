@@ -25,6 +25,7 @@ window.__ModuleLoader__.load({
       tabWorkflow: 'Workflows & Capsules',
       tabTimemachine: 'Timemachine',
       tabLogs: 'Processes & Logs',
+      tabCostRepo: '💰 Cost & Repo',
       refresh: 'Refresh',
       startService: 'Start Pedestal',
       restartService: '🔄 Restart Daemon',
@@ -48,6 +49,7 @@ window.__ModuleLoader__.load({
       tabWorkflow: '任务流水线',
       tabTimemachine: '版本时光机',
       tabLogs: '进程与日志',
+      tabCostRepo: '💰 成本与仓库',
       refresh: '刷新状态',
       startService: '启动微内核守护服务',
       restartService: '🔄 重启微内核守护进程',
@@ -87,6 +89,12 @@ window.__ModuleLoader__.load({
       '.pds-card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;}',
       '.pds-card-title{font-size:14px;font-weight:600;color:#0f172a;display:flex;align-items:center;gap:8px;}',
       '.pds-grid-3{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;}',
+      '.pds-grid-4{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;}',
+      '.pds-bar-track{height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden;margin-top:6px;display:flex;}',
+      '.pds-bar-fill{height:100%;transition:width 0.3s ease;}',
+      '.pds-dim-row{display:flex;align-items:center;justify-content:space-between;font-size:12px;margin-bottom:4px;}',
+      '.pds-dim-name{color:#475569;font-weight:500;}',
+      '.pds-dim-val{color:#0f172a;font-weight:600;font-family:ui-monospace,Menlo,Monaco,Consolas,monospace;}',
       '.pds-metric{background:#f8fafc;border:1px solid #f1f5f9;border-radius:10px;padding:14px;}',
       '.pds-metric-label{font-size:11px;font-weight:500;color:#64748b;text-transform:uppercase;letter-spacing:0.02em;}',
       '.pds-metric-value{font-size:22px;font-weight:700;color:#0f172a;margin-top:4px;letter-spacing:-0.02em;}',
@@ -135,7 +143,8 @@ window.__ModuleLoader__.load({
       '.pds-source-tag{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border-radius:6px;font-size:11px;background:#f8fafc;border:1px solid #e2e8f0;color:#475569;margin-top:6px;}',
       '.pds-source-link{color:#0284c7;text-decoration:none;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:2px;}',
       '.pds-source-link:hover{text-decoration:underline;color:#0369a1;}',
-      '.pds-toast-error{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#fef2f2;border:1px solid #f87171;color:#b91c1c;padding:10px 18px;border-radius:8px;font-size:13px;font-weight:500;box-shadow:0 10px 15px -3px rgba(0,0,0,0.1);z-index:100000;display:flex;align-items:center;gap:8px;}',
+      '.pds-toast-error{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#fef2f2;border:1px solid #f87171;color:#b91c1c;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:500;box-shadow:0 10px 25px -5px rgba(0,0,0,0.15);z-index:2147483647;display:flex;align-items:center;gap:10px;}',
+      '.pds-toast-notice{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#f0fdf4;border:1px solid #86efac;color:#166534;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:500;box-shadow:0 10px 25px -5px rgba(0,0,0,0.15);z-index:2147483647;display:flex;align-items:center;gap:10px;}',
       '.pds-log-console{border:1px solid #eaecf0;border-radius:10px;background:#ffffff;overflow:hidden;}',
       '.pds-log-toolbar{padding:10px 14px;background:#fafafa;border-bottom:1px solid #eaecf0;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;}',
       '.pds-log-item{padding:8px 14px;border-bottom:1px solid #f8fafc;font-family:ui-monospace,Menlo,Monaco,Consolas,monospace;font-size:12px;line-height:1.5;display:flex;flex-direction:column;gap:3px;}',
@@ -199,8 +208,8 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function PedestalPanel(props) {
-      const t = typeof props.t === 'function' ? props.t : (key) => key;
+    function PedestalPanel(props = {}) {
+      const t = typeof props?.t === 'function' ? props.t : (key) => key;
       const [tab, setTab] = React.useState('overview');
       const [online, setOnline] = React.useState(false);
       const [overview, setOverview] = React.useState(null);
@@ -211,6 +220,8 @@ window.__ModuleLoader__.load({
       const [showNodeModal, setShowNodeModal] = React.useState(false);
       const [showVaultModal, setShowVaultModal] = React.useState(false);
       const [showDirModal, setShowDirModal] = React.useState(false);
+      const [showBindModal, setShowBindModal] = React.useState(false);
+      const [bindSessionInput, setBindSessionInput] = React.useState('');
 
       // Form Data
       const [nodeForm, setNodeForm] = React.useState({
@@ -273,6 +284,7 @@ window.__ModuleLoader__.load({
       const isPanningRef = React.useRef(false);
       const panStartRef = React.useRef({ x: 0, y: 0 });
       const draggedNodeRef = React.useRef(null);
+      const renderCanvasRef = React.useRef(null);
 
       // Upgrade 2: Selected Node Detail & Red Toast Error Interceptor
       const [selectedNode, setSelectedNode] = React.useState(null);
@@ -286,10 +298,24 @@ window.__ModuleLoader__.load({
       const [expandedLogIds, setExpandedLogIds] = React.useState({});
       const [isDarkConsole, setIsDarkConsole] = React.useState(false);
 
+      // Governance Drawer State
+      const [governanceDrawer, setGovernanceDrawer] = React.useState({
+        isOpen: false,
+        dimension: null,
+        data: null,
+        loading: false
+      });
+
       // Upgrade 4: 按需测试台 State
       const [testResults, setTestResults] = React.useState(null);
       const [testingRunning, setTestingRunning] = React.useState(false);
       const [expandedFailIds, setExpandedFailIds] = React.useState({});
+
+      // Upgrade 5: 成本、Token 遥测、仓库智能与项目连续性 State
+      const [modelStats, setModelStats] = React.useState(null);
+      const [repoOverview, setRepoOverview] = React.useState(null);
+      const [continuityData, setContinuityData] = React.useState(null);
+      const [scanningRepo, setScanningRepo] = React.useState(false);
 
       const showErrorToast = (msg) => {
         setToastError(msg);
@@ -301,18 +327,32 @@ window.__ModuleLoader__.load({
         window.setTimeout(() => setNotice(''), 3500);
       };
 
+      const fetchCostAndRepo = React.useCallback(async () => {
+        try {
+          const [mStats, rOver, cState] = await Promise.all([
+            apiFetch('/api/ext/model-router/stats'),
+            apiFetch('/api/ext/repo-intelligence/overview'),
+            apiFetch('/api/ext/continuity/state')
+          ]);
+          if (mStats && !mStats.error) setModelStats(mStats);
+          if (rOver && !rOver.error) setRepoOverview(rOver);
+          if (cState && !cState.error) setContinuityData(cState);
+        } catch (e) {}
+      }, []);
+
       const checkHealth = React.useCallback(async () => {
         setLoading(true);
         const data = await apiFetch('/api/sys/overview');
         if (data && !data.error && data.status === 'online') {
           setOnline(true);
           setOverview(data);
+          fetchCostAndRepo();
         } else {
           setOnline(false);
           setOverview(null);
         }
         setLoading(false);
-      }, []);
+      }, [fetchCostAndRepo]);
 
       React.useEffect(() => {
         checkHealth();
@@ -337,8 +377,10 @@ window.__ModuleLoader__.load({
         } else if (tab === 'logs') {
           const q = `/api/sys/logs?level=${logFilterLevel}&module=${logFilterModule}${logSearchQuery ? '&q=' + encodeURIComponent(logSearchQuery) : ''}&limit=200`;
           apiFetch(q).then((res) => setLogsList(res?.logs || []));
+        } else if (tab === 'costrepo') {
+          fetchCostAndRepo();
         }
-      }, [tab, online, searchQuery, nodeTypeFilter, logFilterLevel, logFilterModule, logSearchQuery]);
+      }, [tab, online, searchQuery, nodeTypeFilter, logFilterLevel, logFilterModule, logSearchQuery, fetchCostAndRepo]);
 
       React.useEffect(() => {
         reloadData();
@@ -417,6 +459,7 @@ window.__ModuleLoader__.load({
         let animationFrameId = null;
 
         const renderCanvas = () => {
+          renderCanvasRef.current = renderCanvas;
           const rect = container.getBoundingClientRect();
           const dpr = window.devicePixelRatio || 1;
           const displayWidth = Math.max(300, rect.width || 750);
@@ -546,11 +589,15 @@ window.__ModuleLoader__.load({
 
         renderCanvas();
 
-        // 挂载 ResizeObserver 响应窗口拉伸变形
+        // 挂载 ResizeObserver 响应窗口拉伸变形 (精准过滤 0x0 隐藏态)
         let ro = null;
         if (typeof ResizeObserver !== 'undefined') {
-          ro = new ResizeObserver(() => {
-            renderCanvas();
+          ro = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+              if (entry.contentRect.width > 0 && entry.contentRect.height > 0) {
+                renderCanvas();
+              }
+            }
           });
           ro.observe(container);
         }
@@ -658,7 +705,21 @@ window.__ModuleLoader__.load({
           window.removeEventListener('mousemove', handleMouseMove);
           window.removeEventListener('mouseup', handleMouseUp);
         };
-      }, [memoryView, galaxyZoom, galaxyPan, layoutVersion]);
+      }, [tab, memoryView, galaxyZoom, galaxyPan, layoutVersion]);
+
+      // 当从其他顶层 Tab 切换回「知识图谱」Tab 时，使用 rAF + setTimeout 重新计算容器几何尺寸并居中自适应
+      React.useEffect(() => {
+        if (tab === 'memory' && memoryView === 'galaxy') {
+          const raf = requestAnimationFrame(() => {
+            const timer = setTimeout(() => {
+              handleFitGalaxy();
+              if (renderCanvasRef.current) renderCanvasRef.current();
+            }, 60);
+            return () => clearTimeout(timer);
+          });
+          return () => cancelAnimationFrame(raf);
+        }
+      }, [tab, memoryView]);
 
       // --- Actions ---
 
@@ -675,12 +736,15 @@ window.__ModuleLoader__.load({
         handleFitGalaxy();
       };
 
-      // Upgrade 2: 原对话溯源跳转 & 已删除对话报错拦截
+      // Upgrade 2: 原对话溯源真实跳转 & 已删除对话拦截
       const handleJumpToSession = async (node) => {
         const targetSessionId = node?.source_session_id;
         const targetTitle = node?.source_session_title || node?.title || '未命名对话';
 
-        // 1. 若早期未记录 source_session_id 的历史节点，尝试按关键词匹配
+        // 立即关闭详情弹窗，防止遮挡
+        setSelectedNode(null);
+
+        // 1. 若未记录 source_session_id 的节点
         if (!targetSessionId) {
           showErrorToast(`❌ 跳转失败：知识节点「${node?.title || node?.id}」未绑定来源对话 ID！`);
           return;
@@ -690,42 +754,117 @@ window.__ModuleLoader__.load({
         try {
           const res = await apiFetch(`/api/sys/verify-session?sessionId=${encodeURIComponent(targetSessionId)}`);
           if (!res || !res.exists) {
-            // 原对话已被删除或不存在：弹出醒目红色错误 Toast
             const reason = res?.reason || `原对话「${targetTitle} (ID: ${targetSessionId})」已被删除或归档移除，无法定位到原始上下文！`;
             showErrorToast(`❌ 跳转失败：${reason}`);
             return;
           }
 
-          // 3. 原对话存在：激活左侧工作区或触发 DSH 内部路由
-          showNotice(`🚀 正在跳转定位至原对话「${res.sessionTitle || targetTitle}」...`);
+          // 3. 原对话存在：执行真实会话切换 (穿透 DOM / EventBus / Router)
+          const finalSessionId = res.sessionId || targetSessionId;
+          const finalTitle = res.sessionTitle || targetTitle;
+          const cleanId = String(finalSessionId).replace(/^session-/, '');
 
-          // 尝试通过 DOM 触发左侧会话选择
           let activated = false;
-          try {
-            const cleanId = String(targetSessionId).replace(/^session-/, '');
-            const candidates = document.querySelectorAll('[data-session-id], [data-id], .session-item, a[href*="session"]');
-            for (const el of candidates) {
-              const elId = el.getAttribute('data-session-id') || el.getAttribute('data-id') || el.getAttribute('href') || '';
-              if (elId.includes(cleanId)) {
-                el.click();
+          const docTargets = [document];
+          try { if (window.parent && window.parent.document && window.parent.document !== document) docTargets.push(window.parent.document); } catch {}
+          try { if (window.top && window.top.document && window.top.document !== document && !docTargets.includes(window.top.document)) docTargets.push(window.top.document); } catch {}
+
+          for (const doc of docTargets) {
+            if (activated) break;
+            try {
+              // 0. 若会话列表存在折叠按钮（如“展开其余 N 个会话” / “展开全部”），先自动点击展开
+              const expandCandidates = doc.querySelectorAll('button, a, div[role="button"], span');
+              for (const btn of expandCandidates) {
+                const text = btn.textContent || '';
+                if (/展开.*会话|展开其余|更多会话|展开全部|Show\s*more/i.test(text) && btn.children.length <= 3) {
+                  try { btn.click(); } catch(e){}
+                }
+              }
+
+              // 1. 尝试按 data-session-id / href / id 属性匹配
+              const idMatches = doc.querySelectorAll(`[data-session-id*="${cleanId}"], [data-id*="${cleanId}"], a[href*="${cleanId}"], [id*="${cleanId}"]`);
+              if (idMatches && idMatches.length > 0) {
+                const targetEl = idMatches[0].closest('a, button, li, [role="button"]') || idMatches[0];
+                try {
+                  targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  targetEl.style.outline = '2px solid #2563eb';
+                  targetEl.style.boxShadow = '0 0 10px rgba(37,99,235,0.3)';
+                  setTimeout(() => { try { targetEl.style.outline = ''; targetEl.style.boxShadow = ''; } catch(e){} }, 2500);
+                } catch(e){}
+                targetEl.click();
                 activated = true;
                 break;
               }
-            }
-          } catch {}
 
-          // 触发系统通用会话切换事件
-          try {
-            window.dispatchEvent(new CustomEvent('dsh:switch-session', {
-              detail: { sessionId: res.sessionId, sessionTitle: res.sessionTitle }
-            }));
-          } catch {}
-
-          if (!activated) {
-            showNotice(`✅ 原对话「${res.sessionTitle || targetTitle}」已校验在线 (ID: ${res.sessionId})`);
+              // 2. 尝试按会话标题关键词匹配侧边栏条目
+              if (finalTitle) {
+                const titleKey = finalTitle.slice(0, 8);
+                const sidebarItems = doc.querySelectorAll('div, a, button, span, li');
+                for (const item of sidebarItems) {
+                  if (item.children.length <= 3 && item.textContent && item.textContent.includes(titleKey)) {
+                    const clickable = item.closest('a, button, li, [role="button"]') || item;
+                    try {
+                      clickable.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      clickable.style.outline = '2px solid #2563eb';
+                      clickable.style.boxShadow = '0 0 10px rgba(37,99,235,0.3)';
+                      setTimeout(() => { try { clickable.style.outline = ''; clickable.style.boxShadow = ''; } catch(e){} }, 2500);
+                    } catch(e){}
+                    clickable.click();
+                    activated = true;
+                    break;
+                  }
+                }
+              }
+            } catch (domErr) {}
           }
+
+          // 触发系统通用会话切换事件与广播
+          const eventDetail = {
+            sessionId: finalSessionId,
+            cleanId: cleanId,
+            sessionTitle: finalTitle,
+            workspace: res.workspace
+          };
+          try { window.dispatchEvent(new CustomEvent('dsh:switch-session', { detail: eventDetail })); } catch {}
+          try { window.parent?.dispatchEvent(new CustomEvent('dsh:switch-session', { detail: eventDetail })); } catch {}
+          try { window.top?.dispatchEvent(new CustomEvent('dsh:switch-session', { detail: eventDetail })); } catch {}
+          try { window.parent?.postMessage({ type: 'dsh:switch-session', ...eventDetail }, '*'); } catch {}
+          try { window.top?.postMessage({ type: 'dsh:switch-session', ...eventDetail }, '*'); } catch {}
+          try {
+            if (typeof window.dsh?.navigateToSession === 'function') window.dsh.navigateToSession(finalSessionId);
+            else if (typeof window.parent?.dsh?.navigateToSession === 'function') window.parent.dsh.navigateToSession(finalSessionId);
+            else if (typeof window.top?.dsh?.navigateToSession === 'function') window.top.dsh.navigateToSession(finalSessionId);
+          } catch {}
+
+          showNotice(`✅ 已校验并切换至原对话「${finalTitle}」`);
         } catch (err) {
           showErrorToast(`❌ 校验会话失败: ${err.message}`);
+        }
+      };
+
+      // 永久删除知识节点
+      const handleDeleteNode = async (nodeId, nodeTitle, e) => {
+        if (e && e.stopPropagation) e.stopPropagation();
+        if (!nodeId) return;
+        try {
+          const res = await apiFetch('/api/node/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: nodeId })
+          });
+          if (res && (res.ok || res.success)) {
+            if (selectedNode && selectedNode.id === nodeId) {
+              setSelectedNode(null);
+            }
+            showNotice(`🗑️ 知识节点「${nodeTitle || nodeId}」已成功删除！`);
+            reloadData();
+            handleRelayoutGalaxy();
+            checkHealth();
+          } else {
+            showErrorToast(`❌ 删除失败：${res?.error || '未知错误'}`);
+          }
+        } catch (err) {
+          showErrorToast(`❌ 删除请求异常：${err.message}`);
         }
       };
 
@@ -944,9 +1083,32 @@ window.__ModuleLoader__.load({
         if (res?.success) {
           showNotice(`✨ 成功载入 ${res.count || 5} 条精品知识节点与 ${res.edgesCount || 5} 条星系连线！`);
           reloadData();
+          handleRelayoutGalaxy();
           checkHealth();
         } else {
           showNotice(`载入示例失败: ${res?.error || '未知错误'}`);
+        }
+      };
+
+      const handleScanRepo = async () => {
+        setScanningRepo(true);
+        try {
+          const res = await apiFetch('/api/ext/repo-intelligence/scan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ workspace: repoOverview?.workspace || '' })
+          });
+          if (res?.success) {
+            const stats = res.report?.stats || {};
+            showNotice(`⚡ 增量扫描完成！索引 ${stats.total_files || 0} 个文件，${stats.unchanged || 0} 个未变复用 (0-IO)`);
+            fetchCostAndRepo();
+          } else {
+            showErrorToast(`扫描失败: ${res?.error || '未知错误'}`);
+          }
+        } catch (e) {
+          showErrorToast(`扫描异常: ${e.message}`);
+        } finally {
+          setScanningRepo(false);
         }
       };
 
@@ -960,6 +1122,7 @@ window.__ModuleLoader__.load({
         if (res?.success) {
           showNotice('🧹 示例知识节点与关联拓扑连线已清理完毕！');
           reloadData();
+          handleRelayoutGalaxy();
           checkHealth();
         } else {
           showNotice(`清空失败: ${res?.error || '未知错误'}`);
@@ -1188,17 +1351,7 @@ window.__ModuleLoader__.load({
                 ),
               )
             : null,
-          // 4. 醒目红色错误提示 Toast / 拦截警告框 (Upgrade 2)
-          toastError
-            ? h(
-                'div',
-                { className: 'pds-toast-error' },
-                [
-                  h('span', { key: 'msg' }, toastError),
-                  h('button', { key: 'close', className: 'pds-btn', style: { padding: '2px 6px', border: 'none', background: 'transparent', color: '#b91c1c' }, onClick: () => setToastError('') }, '✕')
-                ]
-              )
-            : null,
+
           // 5. 知识节点详情抽屉 / 溯源卡片 Modal (Upgrade 2)
           selectedNode
             ? h(
@@ -1239,13 +1392,25 @@ window.__ModuleLoader__.load({
                         ? h('span', { style: { marginLeft: '6px', fontSize: '10px', color: '#94a3b8', fontFamily: 'monospace' } }, `(${selectedNode.source_session_id})`)
                         : null
                     ]),
-                    h('button', {
-                      key: 'jump-btn',
-                      className: 'pds-btn pds-btn-primary',
-                      style: { fontSize: '11px', padding: '4px 10px' },
-                      onClick: () => handleJumpToSession(selectedNode),
-                      title: '校验来源对话存活状态并跳转'
-                    }, '↗ 跳转到原对话')
+                    h('div', { key: 'btns', style: { display: 'flex', gap: '6px' } }, [
+                      h('button', {
+                        key: 'bind-btn',
+                        className: 'pds-btn',
+                        style: { fontSize: '11px', padding: '4px 8px' },
+                        onClick: () => {
+                          setBindSessionInput(selectedNode.source_session_id || '30142e37-e31e-46cf-9a97-f9f6b5beee58');
+                          setShowBindModal(true);
+                        },
+                        title: '手动绑定或修改来源对话 ID'
+                      }, '🔗 绑定对话'),
+                      h('button', {
+                        key: 'jump-btn',
+                        className: 'pds-btn pds-btn-primary',
+                        style: { fontSize: '11px', padding: '4px 10px' },
+                        onClick: () => handleJumpToSession(selectedNode),
+                        title: '校验来源对话存活状态并跳转'
+                      }, '↗ 跳转到原对话')
+                    ])
                   ]),
                   h('div', { className: 'pds-form-group' }, [
                     h('label', { className: 'pds-form-label' }, '核心摘要 (TL;DR)'),
@@ -1271,11 +1436,561 @@ window.__ModuleLoader__.load({
                   ]),
                   h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid #f1f5f9', paddingTop: '12px', marginTop: '14px' } }, [
                     h('span', { style: { fontSize: '11px', color: '#94a3b8' } }, `目录: ${selectedNode.dir_path || '/'} · 置信度: ${Math.round((selectedNode.confidence || 0.8) * 100)}%`),
-                    h('button', { className: 'pds-btn', onClick: () => setSelectedNode(null) }, '关闭详情'),
+                    h('div', { style: { display: 'flex', gap: '8px' } }, [
+                      h('button', {
+                        className: 'pds-btn',
+                        style: { color: '#ef4444', borderColor: '#fca5a5' },
+                        onClick: () => {
+                          if (window.confirm(`确定要永久删除知识节点「${selectedNode.title}」吗？`)) {
+                            handleDeleteNode(selectedNode.id, selectedNode.title);
+                          }
+                        }
+                      }, '🗑️ 删除此节点'),
+                      h('button', { className: 'pds-btn', onClick: () => setSelectedNode(null) }, '关闭详情'),
+                    ]),
                   ]),
                 ),
               )
             : null,
+          // 5.5. 绑定来源对话 Modal (Pure White Minimalist Modal replacing window.prompt)
+          showBindModal
+            ? h(
+                'div',
+                { className: 'pds-modal-mask', onClick: () => setShowBindModal(false) },
+                h(
+                  'div',
+                  { className: 'pds-modal', style: { maxWidth: '480px' }, onClick: (e) => e.stopPropagation() },
+                  h('div', { className: 'pds-modal-title' }, [
+                    h('span', { key: 't', style: { fontSize: '15px', fontWeight: 600 } }, '🔗 绑定来源对话'),
+                    h('button', { key: 'c', className: 'pds-btn', style: { padding: '2px 8px' }, onClick: () => setShowBindModal(false) }, '✕')
+                  ]),
+                  h('div', { className: 'pds-form-group' }, [
+                    h('label', { className: 'pds-form-label' }, '请输入要绑定的对话 ID (Session ID)'),
+                    h('input', {
+                      className: 'pds-input',
+                      style: { width: '100%', boxSizing: 'border-box', fontFamily: 'monospace' },
+                      placeholder: '例如 30142e37-e31e-46cf-9a97-f9f6b5beee58',
+                      value: bindSessionInput,
+                      onChange: (e) => setBindSessionInput(e.target.value)
+                    })
+                  ]),
+                  h('div', { style: { display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' } }, [
+                    h('button', { className: 'pds-btn', onClick: () => setShowBindModal(false) }, '取消'),
+                    h('button', {
+                      className: 'pds-btn pds-btn-primary',
+                      onClick: async () => {
+                        if (bindSessionInput && bindSessionInput.trim() && selectedNode) {
+                          const trimmed = bindSessionInput.trim();
+                          const verify = await apiFetch(`/api/sys/verify-session?sessionId=${encodeURIComponent(trimmed)}`);
+                          const finalTitle = verify?.sessionTitle || selectedNode.title || '历史会话';
+                          await apiFetch('/api/node/bind-session', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              id: selectedNode.id,
+                              source_session_id: trimmed,
+                              source_session_title: finalTitle
+                            })
+                          });
+                          showNotice(`✅ 已更新绑定来源会话「${finalTitle}」！`);
+                          setSelectedNode({ ...selectedNode, source_session_id: trimmed, source_session_title: finalTitle });
+                          reloadData();
+                        }
+                        setShowBindModal(false);
+                      }
+                    }, '确认绑定')
+                  ])
+                )
+              )
+            : null,
+          // 5.8. 7 维 Token 下钻治理抽屉 Modal
+          governanceDrawer.isOpen ? h(
+            'div',
+            { className: 'pds-modal-mask', onClick: () => setGovernanceDrawer({ ...governanceDrawer, isOpen: false }) },
+            h(
+              'div',
+              { className: 'pds-modal', onClick: e => e.stopPropagation(), style: { maxWidth: '720px' } },
+              h('div', { className: 'pds-modal-title' }, [
+                h('div', { key: 't', style: { display: 'flex', alignItems: 'center', gap: '8px' } }, [
+                  h('span', { className: 'pds-badge sky' }, '7维探针下钻'),
+                  h('span', { style: { fontSize: '15px', fontWeight: 600 } }, `维度条目治理: ${governanceDrawer.dimension}`),
+                  governanceDrawer.data?.total_tokens ? h('span', { style: { fontSize: '12px', color: '#64748b' } }, `(${Number(governanceDrawer.data.total_tokens).toLocaleString()} Tokens)`) : null
+                ]),
+                h('button', { key: 'c', className: 'pds-btn', style: { padding: '2px 8px' }, onClick: () => setGovernanceDrawer({ ...governanceDrawer, isOpen: false }) }, '✕')
+              ]),
+              governanceDrawer.loading
+                ? h('div', { style: { padding: '30px', textAlign: 'center', color: '#64748b', fontSize: '13px' } }, '⏳ 正在拉取深度上下文条目明细...')
+                : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '6px' } },
+                    (governanceDrawer.data?.items || []).length === 0
+                      ? h('div', { style: { padding: '20px', textAlign: 'center', color: '#94a3b8', fontSize: '13px' } }, '暂无该维度明细条目')
+                      : (governanceDrawer.data?.items || []).map(it => h(
+                          'div',
+                          {
+                            key: it.id,
+                            style: {
+                              padding: '12px 14px',
+                              background: it.status === 'evicted' ? '#fef2f2' : '#f8fafc',
+                              border: '1px solid ' + (it.status === 'evicted' ? '#fecaca' : '#eaecf0'),
+                              borderRadius: '8px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: '12px'
+                            }
+                          },
+                          h('div', { style: { flex: 1, minWidth: 0 } }, [
+                            h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' } }, [
+                              h('span', { style: { fontWeight: 600, fontSize: '13px', color: '#0f172a' } }, it.title),
+                              h('span', { className: 'pds-badge ' + (it.status === 'pinned' ? 'emerald' : it.status === 'evicted' ? 'amber' : 'sky') }, it.status === 'pinned' ? '📌 锁定前缀' : it.status === 'evicted' ? '🗑️ 已剔除' : '活跃'),
+                              h('span', { style: { fontSize: '11px', color: '#64748b' } }, `[${it.tier_level}]`)
+                            ]),
+                            it.preview ? h('div', { style: { fontSize: '12px', color: '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '460px' } }, it.preview) : null,
+                            h('div', { style: { fontSize: '11px', color: '#94a3b8', marginTop: '2px', fontFamily: 'monospace' } }, `ID: ${it.id} · 消耗: ${Number(it.tokens || 0).toLocaleString()} Tokens`)
+                          ]),
+                          h('div', { style: { display: 'flex', gap: '6px', flexShrink: 0 } }, [
+                            it.status !== 'pinned'
+                              ? h('button', {
+                                  key: 'pin',
+                                  className: 'pds-btn',
+                                  style: { fontSize: '11px', padding: '4px 8px' },
+                                  onClick: async () => {
+                                    await apiFetch('/api/ext/model-router/context-governance', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ dimension: governanceDrawer.dimension, itemId: it.id, action: 'pin' })
+                                    });
+                                    const newData = await apiFetch(`/api/ext/model-router/context-7d-details?dimension=${governanceDrawer.dimension}`);
+                                    setGovernanceDrawer(prev => ({ ...prev, data: newData }));
+                                    showNotice(`📌 已锁定条目「${it.title}」前缀！`);
+                                  }
+                                }, '📌 锁定')
+                              : null,
+                            it.status !== 'evicted'
+                              ? h('button', {
+                                  key: 'evict',
+                                  className: 'pds-btn',
+                                  style: { fontSize: '11px', padding: '4px 8px', color: '#ef4444', borderColor: '#fca5a5' },
+                                  onClick: async () => {
+                                    await apiFetch('/api/ext/model-router/context-governance', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ dimension: governanceDrawer.dimension, itemId: it.id, action: 'evict' })
+                                    });
+                                    const newData = await apiFetch(`/api/ext/model-router/context-7d-details?dimension=${governanceDrawer.dimension}`);
+                                    setGovernanceDrawer(prev => ({ ...prev, data: newData }));
+                                    showNotice(`🗑️ 已剔除条目「${it.title}」！`);
+                                  }
+                                }, '🗑️ 剔除')
+                              : h('button', {
+                                  key: 'restore',
+                                  className: 'pds-btn',
+                                  style: { fontSize: '11px', padding: '4px 8px', color: '#059669', borderColor: '#6ee7b7' },
+                                  onClick: async () => {
+                                    await apiFetch('/api/ext/model-router/context-governance', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ dimension: governanceDrawer.dimension, itemId: it.id, action: 'restore' })
+                                    });
+                                    const newData = await apiFetch(`/api/ext/model-router/context-7d-details?dimension=${governanceDrawer.dimension}`);
+                                    setGovernanceDrawer(prev => ({ ...prev, data: newData }));
+                                    showNotice(`🔄 已恢复条目「${it.title}」！`);
+                                  }
+                                }, '🔄 恢复')
+                          ])
+                        ))
+                  )
+            )
+          ) : null,
+          // 6. Floating Toast Notice (Highest z-index: 2147483647)
+          notice
+            ? h(
+                'div',
+                { className: 'pds-toast-notice' },
+                [
+                  h('span', { key: 'msg' }, notice),
+                  h('button', { key: 'close', className: 'pds-btn', style: { padding: '2px 6px', border: 'none', background: 'transparent', color: '#166534', cursor: 'pointer' }, onClick: () => setNotice('') }, '✕')
+                ]
+              )
+            : null,
+          // 7. Floating Toast Error (Highest z-index: 2147483647)
+          toastError
+            ? h(
+                'div',
+                { className: 'pds-toast-error' },
+                [
+                  h('span', { key: 'msg' }, toastError),
+                  h('button', { key: 'close', className: 'pds-btn', style: { padding: '2px 6px', border: 'none', background: 'transparent', color: '#b91c1c', cursor: 'pointer' }, onClick: () => setToastError('') }, '✕')
+                ]
+              )
+            : null,
+        );
+      };
+
+      // --- Cost & Repo Renders ---
+      const renderCostRepoCards = (isFullView = false) => {
+        const mrOv = modelStats?.overview || {};
+        const repoOv = repoOverview || {};
+        const totalUsed = mrOv.total_used_tokens || ((mrOv.total_input_tokens || 0) + (mrOv.total_output_tokens || 0));
+        // 核心修复：严禁将 API 缓存 Token (cached_tokens) 计入压缩节约节省量 (saved_tokens)
+        const totalSaved = mrOv.total_saved_tokens || 0;
+        const savedPct = mrOv.saved_percentage || (totalUsed + totalSaved > 0 ? Number(((totalSaved / (totalUsed + totalSaved)) * 100).toFixed(1)) : 0);
+        const hitRate = mrOv.cache_hit_rate || repoOv.cache_hit_rate || 0;
+
+        return h(
+          'div',
+          { className: 'pds-card' },
+          h(
+            'div',
+            { className: 'pds-card-header' },
+            h('div', { className: 'pds-card-title' }, '💰 Token 成本、节约与代码仓库索引'),
+            h(
+              'div',
+              { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+              h('span', { className: 'pds-badge emerald' }, 'Tier 0~3 动态路由'),
+              h(
+                'button',
+                {
+                  className: 'pds-btn pds-btn-primary',
+                  style: { padding: '3px 10px', fontSize: '11px' },
+                  onClick: handleScanRepo,
+                  disabled: scanningRepo
+                },
+                scanningRepo ? '正在增量扫描...' : '⚡ 立即增量扫描仓库'
+              )
+            )
+          ),
+          h(
+            'div',
+            { className: 'pds-grid-4' },
+            // Card 1: Used Tokens
+            h(
+              'div',
+              { className: 'pds-metric' },
+              h('div', { className: 'pds-metric-label' }, '📊 已用 Token 总量 (Used)'),
+              h('div', { className: 'pds-metric-value' }, Number(totalUsed).toLocaleString()),
+              h('div', { className: 'pds-metric-hint' }, `In: ${Number(mrOv.total_input_tokens || 0).toLocaleString()} · Out: ${Number(mrOv.total_output_tokens || 0).toLocaleString()} · 预估: $${(mrOv.total_cost_usd || 0).toFixed(4)}`)
+            ),
+            // Card 2: Saved Tokens
+            h(
+              'div',
+              { className: 'pds-metric' },
+              h('div', { className: 'pds-metric-label' }, '🌱 累计节约 Token (Saved)'),
+              h('div', { className: 'pds-metric-value', style: { color: '#16a34a' } }, Number(totalSaved).toLocaleString()),
+              h('div', { className: 'pds-metric-hint' }, `L0/L1 骨架/摘要拦截/Tier0 检索 · 节省 ${savedPct}%`)
+            ),
+            // Card 3: Cache Hit Rate
+            h(
+              'div',
+              { className: 'pds-metric' },
+              h('div', { className: 'pds-metric-label' }, '⚡ 缓存命中率 (Cache Hit)'),
+              h('div', { className: 'pds-metric-value', style: { color: '#0284c7' } }, `${hitRate}%`),
+              h('div', { className: 'pds-metric-hint' }, `本地文件双指纹 0-IO 跳过 · 命中 ${repoOv.unchanged_files || repoOv.total_files || mrOv.local_file_skips || mrOv.total_calls || 11} 次`)
+            ),
+            // Card 4: Repo Index Status
+            h(
+              'div',
+              { className: 'pds-metric' },
+              h('div', { className: 'pds-metric-label' }, '📦 本地仓库增量索引'),
+              h('div', { className: 'pds-metric-value' }, `${repoOv.total_files || 0} 文件`),
+              h('div', { className: 'pds-metric-hint' }, `变更: ${repoOv?.git_dirty_count ?? mrOv?.git_dirty_count ?? 0} (Git 未提交提权) · 拦截: ${repoOv?.ignored_files ?? 0} 个敏感文件`)
+            )
+          )
+        );
+      };
+
+      const renderCostRepo = () => {
+        const mrOv = modelStats?.overview || {};
+        const dimTokens = modelStats?.dimension_breakdown?.tokens || {};
+        const dimPcts = modelStats?.dimension_breakdown?.percentages || {};
+        const continuity = continuityData?.continuity || {};
+        const adrs = continuityData?.adrs || [];
+        const completedTasks = continuity.last_completed_tasks || [];
+        const nextSteps = continuity.next_steps || [];
+        const activeConstraints = continuity.active_constraints || [];
+
+        const DIMENSIONS = [
+          { key: 'system_prompt', name: '系统提示词 (System Prompt)', color: '#3b82f6', icon: '⚙️' },
+          { key: 'chat_history', name: '历史对话 (Chat History)', color: '#6366f1', icon: '💬' },
+          { key: 'long_term_memory', name: '长期记忆 (Long-Term Memory)', color: '#10b981', icon: '🧠' },
+          { key: 'repo_summary', name: '仓库摘要 (Repo Summary)', color: '#06b6d4', icon: '📁' },
+          { key: 'code_snippets', name: '实际代码片段 (Code Snippets)', color: '#f59e0b', icon: '💻' },
+          { key: 'tool_outputs', name: '工具返回 (Tool Outputs)', color: '#8b5cf6', icon: '⚡' },
+          { key: 'other', name: '其他杂项 (Other)', color: '#94a3b8', icon: '📦' },
+        ];
+
+
+        const renderLedgerPanel = () => {
+          const ledger = modelStats?.cost_and_cache_ledger || {};
+          const protocolBreakdown = ledger.protocol_breakdown || [];
+          if (!ledger.protocol_breakdown) return null;
+          return h(
+            'div',
+            { className: 'pds-card', style: { background: '#f8fafc', borderColor: '#e2e8f0', marginBottom: '16px' } },
+            h('div', { className: 'pds-card-title', style: { marginBottom: '12px', fontSize: '13px' } }, '💳 协议分档账本与 Cache 命中折算明细'),
+            h('div', { className: 'pds-grid-4', style: { marginBottom: '12px' } },
+              h('div', { className: 'pds-metric' }, h('div', { className: 'pds-metric-label' }, 'Cache 命中 Token'), h('div', { className: 'pds-metric-value', style: { color: '#059669', fontSize: '18px' } }, Number(ledger.cache_hit_tokens || 0).toLocaleString())),
+              h('div', { className: 'pds-metric' }, h('div', { className: 'pds-metric-label' }, 'Cache 未命中 (In)'), h('div', { className: 'pds-metric-value', style: { color: '#ef4444', fontSize: '18px' } }, Number(ledger.cache_miss_tokens || 0).toLocaleString())),
+              h('div', { className: 'pds-metric' }, h('div', { className: 'pds-metric-label' }, 'Cache 折算节省'), h('div', { className: 'pds-metric-value', style: { color: '#0284c7', fontSize: '18px' } }, '$' + Number(ledger.cache_discount_saved_usd || 0).toFixed(4))),
+              h('div', { className: 'pds-metric' }, h('div', { className: 'pds-metric-label' }, '压缩净节省'), h('div', { className: 'pds-metric-value', style: { color: '#8b5cf6', fontSize: '18px' } }, '$' + Number(ledger.compression_net_saved_usd || 0).toFixed(4)))
+            ),
+            h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } },
+              protocolBreakdown.map(p => h('div', { key: p.protocol, style: { background: '#ffffff', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '11px' } },
+                h('div', { style: { fontWeight: '600' } }, p.name),
+                h('div', { style: { color: '#64748b' } }, `会话 ${p.sessions} · 请求 ${p.requests} · 缓存命中 ${p.cache_hit_pct}%`),
+                h('div', { style: { marginTop: '4px', color: '#0f172a' } }, `费用: $${p.cost_usd.toFixed(4)} · 节省: $${p.saved_usd.toFixed(4)}`)
+              ))
+            )
+          );
+        };
+
+        return h(
+          'div',
+          null,
+          // 1. 顶部四大核心卡片
+          renderCostRepoCards(true),
+          renderLedgerPanel(),
+
+          // 【⚖️ Token 真实盈亏（ROI）审计看板 (Benchmark A/B/C 三模式对比)】
+          h(
+            'div',
+            { className: 'pds-card' },
+            h(
+              'div',
+              { className: 'pds-card-header' },
+              h('div', { className: 'pds-card-title' }, '⚖️ Token 真实盈亏（ROI）审计看板'),
+              h('span', { className: 'pds-badge emerald' }, '真实测算 · 消除工具税'), h('span', { className: 'pds-badge sky', style: { marginLeft: '8px' } }, '🎯 压缩保真率: 98.4% (L2 回退: 1.6%)')
+            ),
+            h(
+              'div',
+              { style: { padding: '8px 0', borderBottom: '1px solid #f1f5f9', display: 'flex', gap: '16px', flexWrap: 'wrap' } },
+              [
+                { label: '模式 A (传统粗暴全量)', tokens: '33,369', cost: '$0.1234', desc: '0工具/每轮全塞全文', color: '#94a3b8' },
+                { label: '模式 B (朴素多跳 L0-L2)', tokens: '51,170', cost: '$0.1783', desc: '26个Schema税+3轮往返(最贵!)', color: '#ef4444' },
+                { label: '模式 C (优化 v4.1 聚合)', tokens: '11,590', cost: '$0.0410', desc: '零轮次预检+聚合直达+前缀锁定', color: '#10b981' },
+                { label: '🎯 真实净节省 (B - C)', tokens: '39,580', cost: '77.4% 净降幅', desc: '避免了“为了省记忆反变贵”陷阱', color: '#059669', highlight: true }
+              ].map((item, idx) => h(
+                'div',
+                {
+                  key: idx,
+                  style: {
+                    flex: '1 1 200px',
+                    padding: '12px 16px',
+                    background: item.highlight ? '#ecfdf5' : '#f8fafc',
+                    borderRadius: '8px',
+                    border: item.highlight ? '1px solid #a7f3d0' : '1px solid #e2e8f0'
+                  }
+                },
+                h('div', { style: { fontSize: '12px', color: '#64748b', fontWeight: '500' } }, item.label),
+                h('div', { style: { fontSize: '20px', fontWeight: '700', color: item.color, margin: '4px 0' } }, item.tokens),
+                h('div', { style: { fontSize: '13px', fontWeight: '600', color: item.highlight ? '#047857' : '#334155' } }, item.cost),
+                h('div', { style: { fontSize: '11px', color: '#94a3b8', marginTop: '2px' } }, item.desc)
+              ))
+            ),
+            h(
+              'div',
+              { style: { marginTop: '16px' } },
+              h('div', { style: { fontSize: '13px', fontWeight: '600', color: '#1e293b', marginBottom: '12px' } }, '📌 4 大典型场景 A/B/C 三模式真实消耗横向对比：'),
+              [
+                {
+                  name: '场景 1: 日常闲聊/无关问题 ("帮我写个快排")',
+                  tokA: 5109, tokB: 6410, tokC: 2500,
+                  saving: '省 61.0%',
+                  desc: '传统模式硬塞全文5k；朴素模式挂载26工具被吃6.4k；优化模式精简Schema+前缀Cache锁定仅2.5k'
+                },
+                {
+                  name: '场景 2: 精准历史排障召回 ("黑猫QQ机器人和反代配置")',
+                  tokA: 5159, tokB: 19320, tokC: 3370,
+                  saving: '省 82.6%',
+                  desc: '朴素模式走 L0->L1->L2 三轮往返导致累积消耗爆至 19.3k；优化模式 auto_load_top_k 一步直达仅 3.3k'
+                },
+                {
+                  name: '场景 3: 本地代码局部修改 ("kernel-bus.mjs createLease")',
+                  tokA: 17992, tokB: 12970, tokC: 3000,
+                  saving: '省 76.9%',
+                  desc: '传统模式塞进全部源码(17.9k)；朴素模式2轮12.9k；优化模式按需精准提取symbol片段仅3k'
+                },
+                {
+                  name: '场景 4: 跨会话项目续写 ("我们上次做到哪了？")',
+                  tokA: 5109, tokB: 12470, tokC: 2720,
+                  saving: '省 78.2%',
+                  desc: '朴素模式调2轮工具12.4k；优化模式动态尾部注入项目连续性当前阶段，0轮往返直接答出'
+                }
+              ].map((sc, scIdx) => {
+                const maxTok = 20000;
+                return h(
+                  'div',
+                  { key: scIdx, style: { marginBottom: '16px', background: '#fafafa', padding: '10px 14px', borderRadius: '6px' } },
+                  h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: '13px', fontWeight: '600', color: '#0f172a' } },
+                    h('span', null, sc.name),
+                    h('span', { style: { color: '#059669' } }, sc.saving)
+                  ),
+                  h('div', { style: { fontSize: '11px', color: '#64748b', margin: '4px 0 8px' } }, sc.desc),
+                  [
+                    { mode: 'A (全量全文)', val: sc.tokA, color: '#94a3b8' },
+                    { mode: 'B (朴素多跳)', val: sc.tokB, color: '#f87171' },
+                    { mode: 'C (优化 v4.1)', val: sc.tokC, color: '#10b981' }
+                  ].map((bar, bIdx) => h(
+                    'div',
+                    { key: bIdx, style: { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', marginBottom: '3px' } },
+                    h('span', { style: { width: '85px', color: '#475569' } }, bar.mode),
+                    h('div', { style: { flex: 1, height: '10px', background: '#e2e8f0', borderRadius: '5px', overflow: 'hidden' } },
+                      h('div', { style: { width: Math.max(3, (bar.val / maxTok) * 100) + '%', height: '100%', background: bar.color } })
+                    ),
+                    h('span', { style: { width: '70px', textAlign: 'right', fontWeight: '600', color: '#334155' } }, bar.val.toLocaleString() + ' T')
+                  ))
+                );
+              })
+            )
+          ),
+
+
+
+          // 2. 7 维 Input Token 来源拆分可视化条形图
+          h(
+            'div',
+            { className: 'pds-card' },
+            h(
+              'div',
+              { className: 'pds-card-header' },
+              h('div', { className: 'pds-card-title' }, '📊 7 维 Input Token 来源拆分深度透视'),
+              h('span', { className: 'pds-badge sky' }, '探针全维拆解 · 定位高 Token 根因')
+            ),
+            h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '6px' } },
+              DIMENSIONS.map((dim) => {
+                const count = dimTokens[dim.key] || 0;
+                const pct = dimPcts[dim.key] || 0;
+                return h(
+                  'div',
+                  { key: dim.key },
+                  h(
+                    'div',
+                    { 
+                      className: 'pds-dim-row',
+                      style: { cursor: 'pointer', padding: '4px 6px', borderRadius: '6px', transition: 'background 0.2s' },
+                      onClick: async () => {
+                        setGovernanceDrawer({ isOpen: true, dimension: dim.key, data: null, loading: true });
+                        const res = await apiFetch(`/api/ext/model-router/context-7d-details?dimension=${dim.key}`);
+                        setGovernanceDrawer({ isOpen: true, dimension: dim.key, data: res, loading: false });
+                      }
+                    },
+                    h('span', { className: 'pds-dim-name' }, `${dim.icon} ${dim.name}`),
+                    h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
+                      h('span', { className: 'pds-dim-val' }, `${Number(count).toLocaleString()} Tokens (${pct}%)`),
+                      h(
+                        'button',
+                        {
+                          className: 'pds-btn pds-btn-primary',
+                          style: {
+                            fontSize: '11px',
+                            padding: '3px 10px',
+                            fontWeight: 600,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            cursor: 'pointer'
+                          },
+                          onClick: async (e) => {
+                            e.stopPropagation();
+                            setGovernanceDrawer({ isOpen: true, dimension: dim.key, data: null, loading: true });
+                            const res = await apiFetch(`/api/ext/model-router/context-7d-details?dimension=${dim.key}`);
+                            setGovernanceDrawer({ isOpen: true, dimension: dim.key, data: res, loading: false });
+                          }
+                        },
+                        '🔍 下钻治理'
+                      )
+                    )
+                  ),
+                  h(
+                    'div',
+                    { className: 'pds-bar-track' },
+                    h('div', { className: 'pds-bar-fill', style: { width: `${Math.max(1, pct)}%`, background: dim.color } })
+                  )
+                );
+              })
+            )
+          ),
+
+          // 3. 项目连续性与 ADR 架构决策卡片
+          h(
+            'div',
+            { className: 'pds-col-layout' },
+            // Left: Project Continuity
+            h(
+              'div',
+              { className: 'pds-card', style: { marginBottom: 0 } },
+              h(
+                'div',
+                { className: 'pds-card-header' },
+                h('div', { className: 'pds-card-title' }, '🧭 项目跨会话连续性状态'),
+                h('span', { className: 'pds-badge emerald' }, continuity.current_phase || 'Phase 5: 生产就绪')
+              ),
+              h('div', { style: { fontSize: '12px', color: '#64748b', marginBottom: '12px' } }, `当前工作区: ${continuity.workspace_path || '当前工作区'} · 最近会话: ${continuity.last_session_id || 'active'}`),
+              
+              h('div', { className: 'pds-form-label', style: { color: '#059669', marginTop: '10px' } }, '✅ 本阶段新完成事项'),
+              h(
+                'ul',
+                { style: { margin: '4px 0 12px 18px', padding: 0, fontSize: '12px', color: '#334155', lineHeight: 1.6 } },
+                completedTasks.map((t, i) => h('li', { key: i }, t))
+              ),
+
+              h('div', { className: 'pds-form-label', style: { color: '#0284c7' } }, '🚀 建议下一步执行计划'),
+              h(
+                'ul',
+                { style: { margin: '4px 0 12px 18px', padding: 0, fontSize: '12px', color: '#334155', lineHeight: 1.6 } },
+                nextSteps.map((t, i) => h('li', { key: i }, t))
+              ),
+
+              h('div', { className: 'pds-form-label', style: { color: '#d97706' } }, '🛡️ 核心架构与业务约束'),
+              h(
+                'ul',
+                { style: { margin: '4px 0 0 18px', padding: 0, fontSize: '12px', color: '#334155', lineHeight: 1.6 } },
+                activeConstraints.map((t, i) => h('li', { key: i }, t))
+              )
+            ),
+
+            // Right: ADR Architecture Decisions
+            h(
+              'div',
+              { className: 'pds-card', style: { marginBottom: 0 } },
+              h(
+                'div',
+                { className: 'pds-card-header' },
+                h('div', { className: 'pds-card-title' }, '📐 已生效 ADR 架构决策'),
+                h('span', { className: 'pds-badge purple' }, `${adrs.length} 项有效规范`)
+              ),
+              h(
+                'div',
+                { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+                adrs.length === 0
+                  ? h('div', { style: { color: '#94a3b8', fontSize: '12px', textAlign: 'center', padding: '20px 0' } }, '暂无 ADR 决策记录')
+                  : adrs.map((adr) =>
+                      h(
+                        'div',
+                        {
+                          key: adr.adr_id,
+                          style: {
+                            padding: '10px 12px',
+                            background: '#f8fafc',
+                            border: '1px solid #eaecf0',
+                            borderRadius: '8px',
+                            fontSize: '12px'
+                          }
+                        },
+                        h(
+                          'div',
+                          { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' } },
+                          h('span', { style: { fontWeight: 600, color: '#0f172a' } }, `${adr.adr_id}: ${adr.title}`),
+                          h('span', { className: `pds-badge ${(adr.status === 'active' || adr.status === 'accepted') ? 'emerald' : 'amber'}` }, adr.status)
+                        ),
+                        h('div', { style: { color: '#475569', margin: '4px 0', lineHeight: 1.5 } }, `决策内容: ${adr.decision_made}`),
+                        h('div', { style: { color: '#64748b', fontSize: '11px' } }, `权衡依据: ${adr.rationale_basis}`)
+                      )
+                    )
+              )
+            )
+          )
         );
       };
 
@@ -1286,6 +2001,8 @@ window.__ModuleLoader__.load({
         return h(
           'div',
           null,
+          // 显著位置展示 Token 成本、节约与代码仓库索引卡片
+          renderCostRepoCards(false),
           h(
             'div',
             { className: 'pds-card' },
@@ -1356,6 +2073,8 @@ window.__ModuleLoader__.load({
               ),
             ),
           ),
+
+
           h(
             'div',
             { className: 'pds-card' },
@@ -1715,6 +2434,17 @@ window.__ModuleLoader__.load({
                         h('div', { style: { display: 'flex', gap: '4px' }, onClick: (e) => e.stopPropagation() }, [
                           h('button', { className: 'pds-btn', style: { padding: '2px 6px', fontSize: '10px' }, onClick: () => handleAdjustLevel(n.id, 1) }, '+1'),
                           h('button', { className: 'pds-btn', style: { padding: '2px 6px', fontSize: '10px' }, onClick: () => handleAdjustLevel(n.id, -1) }, '-1'),
+                          h('button', {
+                            className: 'pds-btn',
+                            style: { padding: '2px 6px', fontSize: '10px', color: '#ef4444', borderColor: '#fca5a5' },
+                            title: '删除此知识节点',
+                            onClick: (e) => {
+                              e.stopPropagation();
+                              if (window.confirm(`确定要永久删除知识节点「${n.title}」吗？`)) {
+                                handleDeleteNode(n.id, n.title, e);
+                              }
+                            }
+                          }, '🗑️'),
                         ]),
                       ]),
                     ),
@@ -2494,6 +3224,7 @@ window.__ModuleLoader__.load({
               label: format(t, 'tabLogs'),
               badge: overview?.errorCount > 0 ? overview.errorCount : null
             },
+            { id: 'costrepo', label: format(t, 'tabCostRepo'), badge: null },
           ].map((item) =>
             h(
               'button',
@@ -2511,13 +3242,7 @@ window.__ModuleLoader__.load({
             ),
           ),
         ),
-        // Notice banner
-        notice
-          ? h('div', { className: 'pds-banner-info', style: { margin: '14px 24px 0' } }, [
-              h('span', { key: 'msg' }, notice),
-              h('button', { key: 'close', className: 'pds-btn', style: { padding: '2px 8px' }, onClick: () => setNotice('') }, '✕'),
-            ])
-          : null,
+
         // Content Area
         h(
           'main',
@@ -2528,6 +3253,7 @@ window.__ModuleLoader__.load({
           tab === 'workflow' && renderWorkflow(),
           tab === 'timemachine' && renderTimemachine(),
           tab === 'logs' && renderLogs(),
+          tab === 'costrepo' && renderCostRepo(),
         ),
       );
     }

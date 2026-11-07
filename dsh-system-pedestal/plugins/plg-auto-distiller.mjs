@@ -311,7 +311,7 @@ export async function activate(ctx) {
   // 3.1 memory_capsule_export
   ctx.tools.register({
     name: 'memory_capsule_export',
-    description: '将指定目录下的知识节点与图谱连线打包导出为标准 .dsh-capsule.json 知识胶囊包（严格过滤 /Vault 机密数据并经过脱敏清洗）',
+    description: '将知识节点与图谱导出为脱敏.dsh-capsule.json',
     parameters: {
       type: 'object',
       properties: {
@@ -344,17 +344,19 @@ export async function activate(ctx) {
 
       const rawNodes = ctx.db.query(nodeSql, params);
 
-      // 二次脱敏校验
+      // 二次脱敏校验（严格脱敏机密与 Vault 敏感标记）
       const safeNodes = rawNodes.map(n => {
         const sanitized = ctx.crypto?.sanitize ? ctx.crypto.sanitize(n.full_content) : { cleanText: n.full_content };
+        const cleanContent = (sanitized.cleanText || '').replace(/\/Vault\b|\/Vault\//g, '[PROTECTED_VAULT]');
+        const cleanTldr = (n.tldr || '').replace(/\/Vault\b|\/Vault\//g, '[PROTECTED_VAULT]');
         return {
           id: n.id,
-          dir_path: n.dir_path,
+          dir_path: (n.dir_path || '').replace(/\/Vault\b|\/Vault\//g, '[PROTECTED_VAULT]'),
           node_type: n.node_type,
           title: n.title,
-          tldr: n.tldr,
+          tldr: cleanTldr,
           keywords: n.keywords,
-          full_content: sanitized.cleanText,
+          full_content: cleanContent,
           confidence: n.confidence,
           drawer_level: n.drawer_level,
           created_at: n.created_at
@@ -411,7 +413,7 @@ export async function activate(ctx) {
   // 3.2 memory_capsule_import
   ctx.tools.register({
     name: 'memory_capsule_import',
-    description: '导入并挂载外部 .dsh-capsule.json 知识胶囊包，无缝合并目录、知识节点与图谱连线，并自动重算向量特征',
+    description: '导入知识胶囊包并自动重算向量',
     parameters: {
       type: 'object',
       properties: {

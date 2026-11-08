@@ -1884,12 +1884,15 @@ window.__ModuleLoader__.load({
                           className: 'pds-btn pds-btn-primary',
                           style: {
                             fontSize: '11px',
-                            padding: '3px 10px',
+                            padding: '4px 10px',
                             fontWeight: 600,
                             display: 'inline-flex',
                             alignItems: 'center',
                             gap: '4px',
-                            cursor: 'pointer'
+                            cursor: 'pointer',
+                            flexShrink: 0,
+                            whiteSpace: 'nowrap',
+                            minWidth: 'max-content'
                           },
                           onClick: async (e) => {
                             e.stopPropagation();

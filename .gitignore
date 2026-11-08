@@ -46,3 +46,14 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json
+# ===== Local vault runtime & secrets (NEVER COMMIT) =====
+memory_vault/
+*.master_key
+.vault_leases.enc
+*.db-shm
+*.db-wal
+Python/
+*.log
+daemon.log
+daemon_run.log
+plg-model-router-content.txt
